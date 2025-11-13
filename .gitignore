@@ -13,3 +13,7 @@ Thumbs.db
 *.mp4
 
 Horizons-Pos5/
+
+dist/
+backend/dist/
+*.log
