@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pos_db?schema=public
+      - REDIS_URL=redis://cache:6379
+      - JWT_SECRET=your-jwt-secret
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - /app/dist
+    command: sh -c "cd /app && ls -la && npm install && npx prisma generate && npm run start:dev"

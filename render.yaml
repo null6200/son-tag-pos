@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: sontag-pos-backend
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/health/ready
+    dockerfilePath: backend/Dockerfile
+    postdeploy: |
+      npx prisma generate --schema=backend/prisma/schema.prisma
+      npx prisma migrate deploy --schema=backend/prisma/schema.prisma
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sontag-pos-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+
+databases:
+  - name: sontag-pos-db
+    plan: free
+    databaseName: pos
+    user: posuser

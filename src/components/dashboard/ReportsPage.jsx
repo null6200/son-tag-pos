@@ -1,0 +1,689 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { api } from '@/lib/api';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+
+// Backend-wired reports; graceful fallbacks used only for export printing
+
+const SectionHeader = ({ title, onExportExcel, onExportPdf }) => (
+  <div className="flex items-center justify-between">
+    <div>
+      <h3 className="text-xl font-semibold">{title}</h3>
+      <p className="text-muted-foreground text-sm">Filter, export, and manage reports</p>
+    </div>
+    <div className="flex gap-2">
+      <Button variant="outline" onClick={onExportExcel}>Export Excel</Button>
+      <Button variant="outline" onClick={onExportPdf}>Export PDF</Button>
+    </div>
+  </div>
+);
+
+const TableReportsSection = ({ user }) => {
+  const [typeFilter, setTypeFilter] = useState('ALL');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [view, setView] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, id: null });
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const params = {
+          ...(user?.branchId ? { branchId: user.branchId } : {}),
+          type: typeFilter !== 'ALL' ? typeFilter : undefined,
+          from: from || undefined,
+          to: to || undefined,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        };
+        let res = await api.reports?.tables?.list?.(params);
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        setRows(items);
+        setTotal(typeof res?.total === 'number' ? res.total : items.length);
+      } catch {
+        setRows([]); setTotal(0);
+      } finally { setLoading(false); }
+    })();
+  }, [typeFilter, from, to, page, user?.branchId]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const items = rows;
+
+  const exportExcel = () => {
+    const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'table_reports.json'; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportPdf = () => window.print();
+  const onDelete = (id) => setDeleteConfirm({ open: true, id });
+  const confirmDelete = async () => {
+    try {
+      if (!deleteConfirm.id) return;
+      await api.reports?.tables?.remove?.(String(deleteConfirm.id));
+      setDeleteConfirm({ open: false, id: null });
+      // reload current page
+      const p = Math.max(1, page);
+      setPage(p);
+    } catch {
+      setDeleteConfirm({ open: false, id: null });
+    }
+  };
+
+  return (
+    <Card className="glass-effect">
+      <CardHeader>
+        <SectionHeader title="Table Reports" onExportExcel={exportExcel} onExportPdf={exportPdf} />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col md:flex-row gap-3 md:items-end md:justify-between">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="tr-type" className="text-sm">Type</Label>
+            <select id="tr-type" value={typeFilter} onChange={(e) => { setPage(1); setTypeFilter(e.target.value); }} className="h-9 rounded-md border bg-background px-3 text-sm min-w-[12rem]">
+              <option value="ALL">All</option>
+              {['Sales', 'Purchase', 'Expenses'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-sm" htmlFor="tr-from">From</Label>
+            <Input id="tr-from" type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }} className="w-[11rem]" />
+            <Label className="text-sm" htmlFor="tr-to">To</Label>
+            <Input id="tr-to" type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }} className="w-[11rem]" />
+          </div>
+        </div>
+
+        <div className="border rounded-md overflow-hidden">
+          <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+            <div className="col-span-4">Report Title</div>
+            <div className="col-span-2">Type</div>
+            <div className="col-span-2">Generated By</div>
+            <div className="col-span-2">Date Generated</div>
+            <div className="col-span-2 text-right">Actions</div>
+          </div>
+          <div className="divide-y max-h-[400px] overflow-y-auto">
+            {items.map(r => (
+              <div key={r.id} className="grid grid-cols-12 px-3 py-2 text-sm items-center odd:bg-background/50 hover:bg-muted/40">
+                <button className="col-span-4 text-left text-primary hover:underline" onClick={() => setView(r)}>{r.title}</button>
+                <div className="col-span-2">{r.type}</div>
+                <div className="col-span-2">{r.by || r.generatedBy || r.username || '—'}</div>
+                <div className="col-span-2">{new Date(r.createdAt).toLocaleString()}</div>
+                <div className="col-span-2 flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setView(r)}>View</Button>
+                  <Button size="sm" variant="outline" onClick={() => window.alert('Downloading mock report...')}>Download</Button>
+                  <Button size="sm" variant="destructive" onClick={() => onDelete(r.id)}>Delete</Button>
+                </div>
+              </div>
+            ))}
+            {(!loading && items.length === 0) && (
+              <div className="px-3 py-6 text-sm text-muted-foreground">No table reports found.</div>
+            )}
+          </div>
+        </div>
+
+        {(() => {
+          const s = total === 0 ? 0 : startIdx + 1;
+          const e = Math.min(total, startIdx + pageSize);
+          return (
+            <div className="flex flex-col items-center gap-3 pt-3">
+              <div className="text-sm text-muted-foreground">{total === 0 ? '0' : `${s}-${e}`} of {total}</div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</Button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }).slice(0, 5).map((_, idx) => {
+                    const pg = idx + 1;
+                    const active = pg === clamped;
+                    return (
+                      <Button key={pg} variant={active ? 'default' : 'outline'} size="sm" onClick={() => setPage(pg)}>{pg}</Button>
+                    );
+                  })}
+                </div>
+                <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+              </div>
+            </div>
+          );
+        })()}
+      </CardContent>
+
+      {/* Details Modal */}
+      <Dialog open={!!view} onOpenChange={(v) => { if (!v) setView(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{view?.title}</DialogTitle>
+            <DialogDescription>Type: {view?.type} • Generated by {view?.by}</DialogDescription>
+          </DialogHeader>
+          {view && (
+            <div className="space-y-2 text-sm">
+              <div><strong>ID:</strong> {view.id}</div>
+              <div><strong>Date Generated:</strong> {new Date(view.createdAt).toLocaleString()}</div>
+              <div><strong>Notes:</strong> Mock report details preview.</div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setView(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm */}
+      <Dialog open={deleteConfirm.open} onOpenChange={(v) => setDeleteConfirm(prev => ({ ...prev, open: v }))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Report</DialogTitle>
+            <DialogDescription>Are you sure you want to delete this report?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteConfirm({ open: false, id: null })}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+};
+
+const StaffReportsSection = ({ user }) => {
+  const [roleFilter, setRoleFilter] = useState('ALL');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [view, setView] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  const [roles, setRoles] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const params = {
+          ...(user?.branchId ? { branchId: user.branchId } : {}),
+          role: roleFilter !== 'ALL' ? roleFilter : undefined,
+          from: from || undefined,
+          to: to || undefined,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        };
+        let res = await api.reports?.staff?.list?.(params);
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        setRows(items);
+        setTotal(typeof res?.total === 'number' ? res.total : items.length);
+        // derive roles from payload
+        setRoles(Array.from(new Set(items.map(r => r.role).filter(Boolean))));
+      } catch {
+        setRows([]); setTotal(0); setRoles([]);
+      } finally { setLoading(false); }
+    })();
+  }, [roleFilter, from, to, page, user?.branchId]);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const items = rows;
+
+  const exportExcel = () => {
+    const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'staff_reports.json'; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const exportPdf = () => window.print();
+
+  return (
+    <Card className="glass-effect">
+      <CardHeader>
+        <SectionHeader title="User/Staff Reports" onExportExcel={exportExcel} onExportPdf={exportPdf} />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col md:flex-row gap-3 md:items-end md:justify-between">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="sr-role" className="text-sm">Role</Label>
+            <select id="sr-role" value={roleFilter} onChange={(e) => { setPage(1); setRoleFilter(e.target.value); }} className="h-9 rounded-md border bg-background px-3 text-sm min-w-[12rem]">
+              <option value="ALL">All</option>
+              {roles.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-sm" htmlFor="sr-from">From</Label>
+            <Input id="sr-from" type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }} className="w-[11rem]" />
+            <Label className="text-sm" htmlFor="sr-to">To</Label>
+            <Input id="sr-to" type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }} className="w-[11rem]" />
+          </div>
+        </div>
+
+        <div className="border rounded-md overflow-hidden">
+          <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+            <div className="col-span-3">Staff Name</div>
+            <div className="col-span-2">Role</div>
+            <div className="col-span-2">Total Shifts</div>
+            <div className="col-span-2">Total Sales</div>
+            <div className="col-span-2">Last Active Date</div>
+            <div className="col-span-1 text-right">Actions</div>
+          </div>
+          <div className="divide-y max-h-[400px] overflow-y-auto">
+            {items.map(r => (
+              <div key={r.id} className="grid grid-cols-12 px-3 py-2 text-sm items-center odd:bg-background/50 hover:bg-muted/40">
+                <div className="col-span-3">{r.name}</div>
+                <div className="col-span-2">{r.role}</div>
+                <div className="col-span-2">{r.totalShifts}</div>
+                <div className="col-span-2">${r.totalSales.toLocaleString()}</div>
+                <div className="col-span-2">{new Date(r.lastActive).toLocaleString()}</div>
+                <div className="col-span-1 flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setView(r)}>View Details</Button>
+                  <Button size="sm" variant="outline" onClick={() => window.print()}>Print</Button>
+                </div>
+              </div>
+            ))}
+            {items.length === 0 && (
+              <div className="px-3 py-6 text-sm text-muted-foreground">No staff reports found.</div>
+            )}
+          </div>
+        </div>
+
+        {(() => {
+          const s = total === 0 ? 0 : startIdx + 1;
+          const e = Math.min(total, startIdx + pageSize);
+          return (
+            <div className="flex flex-col items-center gap-3 pt-3">
+              <div className="text-sm text-muted-foreground">{total === 0 ? '0' : `${s}-${e}`} of {total}</div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</Button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }).slice(0, 5).map((_, idx) => {
+                    const pg = idx + 1;
+                    const active = pg === clamped;
+                    return (
+                      <Button key={pg} variant={active ? 'default' : 'outline'} size="sm" onClick={() => setPage(pg)}>{pg}</Button>
+                    );
+                  })}
+                </div>
+                <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+              </div>
+            </div>
+          );
+        })()}
+      </CardContent>
+
+      {/* Details Modal */}
+      <Dialog open={!!view} onOpenChange={(v) => { if (!v) setView(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{view?.name}</DialogTitle>
+            <DialogDescription>Role: {view?.role}</DialogDescription>
+          </DialogHeader>
+          {view && (
+            <div className="space-y-2 text-sm">
+              <div><strong>Total Shifts:</strong> {view.totalShifts}</div>
+              <div><strong>Total Sales:</strong> ${view.totalSales.toLocaleString()}</div>
+              <div><strong>Last Active:</strong> {new Date(view.lastActive).toLocaleString()}</div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setView(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+};
+
+const ReportsPage = ({ user }) => {
+  const [tab, setTab] = useState('table');
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-3xl font-bold gradient-text mb-2">Reports</h2>
+        <p className="text-muted-foreground">Overview of Table and User/Staff reports</p>
+      </div>
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <TabsList>
+          <TabsTrigger value="table">Table Reports</TabsTrigger>
+          <TabsTrigger value="staff">User/Staff Reports</TabsTrigger>
+          <TabsTrigger value="sales">Sales</TabsTrigger>
+          <TabsTrigger value="inventory">Inventory</TabsTrigger>
+          <TabsTrigger value="discounts">Discounts</TabsTrigger>
+          <TabsTrigger value="cash">Cash In/Out</TabsTrigger>
+        </TabsList>
+        <TabsContent value="table" className="mt-4">
+          <TableReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="staff" className="mt-4">
+          <StaffReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="sales" className="mt-4">
+          <SalesReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="inventory" className="mt-4">
+          <InventoryReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="discounts" className="mt-4">
+          <DiscountsReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="cash" className="mt-4">
+          <CashMovementsReportsSection user={user} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+};
+
+export default ReportsPage;
+
+// Sales Reports
+const SalesReportsSection = ({ user }) => {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const params = {
+          ...(user?.branchId ? { branchId: user.branchId } : {}),
+          from: from || undefined,
+          to: to || undefined,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        };
+        let items = [];
+        let totalCount = 0;
+        // Prefer a dedicated sales endpoint if present
+        if (api.reports?.sales) {
+          const res = await api.reports.sales({ branchId: params.branchId, from: params.from, to: params.to });
+          items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+          totalCount = items.length;
+          // apply simple client paging when dedicated endpoint lacks pagination
+          items = items.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize);
+        } else {
+          const res = await api.reports.list({ ...params, type: 'sales' });
+          items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+          totalCount = typeof res?.total === 'number' ? res.total : items.length;
+        }
+        setRows(items);
+        setTotal(totalCount);
+      } catch { setRows([]); setTotal(0); }
+      finally { setLoading(false); }
+    })();
+  }, [user?.branchId, from, to, page]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const exportExcel = () => {
+    const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'sales_reports.json'; a.click(); URL.revokeObjectURL(url);
+  };
+  const exportPdf = () => window.print();
+
+  return (
+    <Card className="glass-effect">
+      <CardHeader>
+        <SectionHeader title="Sales Reports" onExportExcel={exportExcel} onExportPdf={exportPdf} />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm" htmlFor="sales-from">From</Label>
+          <Input id="sales-from" type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }} className="w-[11rem]" />
+          <Label className="text-sm" htmlFor="sales-to">To</Label>
+          <Input id="sales-to" type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }} className="w-[11rem]" />
+        </div>
+        <div className="border rounded-md overflow-hidden">
+          <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+            <div className="col-span-3">Order ID</div>
+            <div className="col-span-3">Cashier</div>
+            <div className="col-span-3">Total</div>
+            <div className="col-span-3">Date</div>
+          </div>
+          <div className="divide-y max-h-[400px] overflow-y-auto">
+            {rows.map(r => (
+              <div key={r.id} className="grid grid-cols-12 px-3 py-2 text-sm items-center odd:bg-background/50 hover:bg-muted/40">
+                <div className="col-span-3">{r.id}</div>
+                <div className="col-span-3">{r.cashier || r.user || '—'}</div>
+                <div className="col-span-3">${Number(r.total || r.amount || 0).toFixed(2)}</div>
+                <div className="col-span-3">{new Date(r.createdAt || r.date).toLocaleString()}</div>
+              </div>
+            ))}
+            {(!loading && rows.length === 0) && (<div className="px-3 py-6 text-sm text-muted-foreground">No sales found.</div>)}
+          </div>
+        </div>
+        {(() => { const s = total === 0 ? 0 : startIdx + 1; const e = Math.min(total, startIdx + pageSize); return (
+          <div className="flex items-center justify-between mt-3 text-sm">
+            <div className="text-muted-foreground">{total === 0 ? '0' : `${s}-${e}`} of {total}</div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
+              <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+            </div>
+          </div>
+        ); })()}
+      </CardContent>
+    </Card>
+  );
+};
+
+// Inventory Reports
+const InventoryReportsSection = ({ user }) => {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.reports.inventory.list({ ...(user?.branchId ? { branchId: user.branchId } : {}), from: from || undefined, to: to || undefined, limit: pageSize, offset: (page - 1) * pageSize });
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        setRows(items);
+        setTotal(typeof res?.total === 'number' ? res.total : items.length);
+      } catch { setRows([]); setTotal(0); } finally { setLoading(false); }
+    })();
+  }, [user?.branchId, from, to, page]);
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const exportExcel = () => { const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'inventory_reports.json'; a.click(); URL.revokeObjectURL(url); };
+  const exportPdf = () => window.print();
+  return (
+    <Card className="glass-effect">
+      <CardHeader>
+        <SectionHeader title="Inventory Reports" onExportExcel={exportExcel} onExportPdf={exportPdf} />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm" htmlFor="inv-from">From</Label>
+          <Input id="inv-from" type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }} className="w-[11rem]" />
+          <Label className="text-sm" htmlFor="inv-to">To</Label>
+          <Input id="inv-to" type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }} className="w-[11rem]" />
+        </div>
+        <div className="border rounded-md overflow-hidden">
+          <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+            <div className="col-span-4">Item</div>
+            <div className="col-span-4">Movement</div>
+            <div className="col-span-4">Date</div>
+          </div>
+          <div className="divide-y max-h-[400px] overflow-y-auto">
+            {rows.map((r, idx) => (
+              <div key={r.id || idx} className="grid grid-cols-12 px-3 py-2 text-sm items-center odd:bg-background/50 hover:bg-muted/40">
+                <div className="col-span-4">{r.productName || r.productId}</div>
+                <div className="col-span-4">{r.delta ?? r.qty ?? 0}</div>
+                <div className="col-span-4">{new Date(r.createdAt || r.date).toLocaleString()}</div>
+              </div>
+            ))}
+            {(!loading && rows.length === 0) && (<div className="px-3 py-6 text-sm text-muted-foreground">No inventory movements found.</div>)}
+          </div>
+        </div>
+        {(() => { const s = total === 0 ? 0 : startIdx + 1; const e = Math.min(total, startIdx + pageSize); return (
+          <div className="flex items-center justify-between mt-3 text-sm">
+            <div className="text-muted-foreground">{total === 0 ? '0' : `${s}-${e}`} of {total}</div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
+              <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+            </div>
+          </div>
+        ); })()}
+      </CardContent>
+    </Card>
+  );
+};
+
+// Discounts Reports
+const DiscountsReportsSection = ({ user }) => {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.reports.discounts.list({ ...(user?.branchId ? { branchId: user.branchId } : {}), from: from || undefined, to: to || undefined, limit: pageSize, offset: (page - 1) * pageSize });
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        setRows(items);
+        setTotal(typeof res?.total === 'number' ? res.total : items.length);
+      } catch { setRows([]); setTotal(0); } finally { setLoading(false); }
+    })();
+  }, [user?.branchId, from, to, page]);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const exportExcel = () => { const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'discounts_reports.json'; a.click(); URL.revokeObjectURL(url); };
+  const exportPdf = () => window.print();
+  return (
+    <Card className="glass-effect">
+      <CardHeader>
+        <SectionHeader title="Discounts Reports" onExportExcel={exportExcel} onExportPdf={exportPdf} />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm" htmlFor="disc-from">From</Label>
+          <Input id="disc-from" type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }} className="w-[11rem]" />
+          <Label className="text-sm" htmlFor="disc-to">To</Label>
+          <Input id="disc-to" type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }} className="w-[11rem]" />
+        </div>
+        <div className="border rounded-md overflow-hidden">
+          <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+            <div className="col-span-4">Name</div>
+            <div className="col-span-4">Amount</div>
+            <div className="col-span-4">Date</div>
+          </div>
+          <div className="divide-y max-h-[400px] overflow-y-auto">
+            {rows.map((r, idx) => (
+              <div key={r.id || idx} className="grid grid-cols-12 px-3 py-2 text-sm items-center odd:bg-background/50 hover:bg-muted/40">
+                <div className="col-span-4">{r.discountName || r.name}</div>
+                <div className="col-span-4">${Number(r.amount || r.value || 0).toFixed(2)}</div>
+                <div className="col-span-4">{new Date(r.createdAt || r.date).toLocaleString()}</div>
+              </div>
+            ))}
+            {(!loading && rows.length === 0) && (<div className="px-3 py-6 text-sm text-muted-foreground">No discounts found.</div>)}
+          </div>
+        </div>
+        {(() => { const s = total === 0 ? 0 : startIdx + 1; const e = Math.min(total, startIdx + pageSize); return (
+          <div className="flex items-center justify-between mt-3 text-sm">
+            <div className="text-muted-foreground">{total === 0 ? '0' : `${s}-${e}`} of {total}</div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
+              <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+            </div>
+          </div>
+        ); })()}
+      </CardContent>
+    </Card>
+  );
+};
+
+// Cash Movements Reports
+const CashMovementsReportsSection = ({ user }) => {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.reports.cashMovements.list({ ...(user?.branchId ? { branchId: user.branchId } : {}), from: from || undefined, to: to || undefined, limit: pageSize, offset: (page - 1) * pageSize });
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        setRows(items);
+        setTotal(typeof res?.total === 'number' ? res.total : items.length);
+      } catch { setRows([]); setTotal(0); } finally { setLoading(false); }
+    })();
+  }, [user?.branchId, from, to, page]);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const exportExcel = () => { const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'cash_movements_reports.json'; a.click(); URL.revokeObjectURL(url); };
+  const exportPdf = () => window.print();
+  return (
+    <Card className="glass-effect">
+      <CardHeader>
+        <SectionHeader title="Cash Movements" onExportExcel={exportExcel} onExportPdf={exportPdf} />
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm" htmlFor="cash-from">From</Label>
+          <Input id="cash-from" type="date" value={from} onChange={(e) => { setPage(1); setFrom(e.target.value); }} className="w-[11rem]" />
+          <Label className="text-sm" htmlFor="cash-to">To</Label>
+          <Input id="cash-to" type="date" value={to} onChange={(e) => { setPage(1); setTo(e.target.value); }} className="w-[11rem]" />
+        </div>
+        <div className="border rounded-md overflow-hidden">
+          <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+            <div className="col-span-3">Time</div>
+            <div className="col-span-3">Type</div>
+            <div className="col-span-3">Amount</div>
+            <div className="col-span-3">By</div>
+          </div>
+          <div className="divide-y max-h-[400px] overflow-y-auto">
+            {rows.map((m, idx) => (
+              <div key={m.id || idx} className="grid grid-cols-12 px-3 py-2 text-sm items-center odd:bg-background/50 hover:bg-muted/40">
+                <div className="col-span-3">{new Date(m.createdAt || m.date).toLocaleString()}</div>
+                <div className="col-span-3">{m.type || (Number(m.amount) >= 0 ? 'PAY_IN' : 'PAY_OUT')}</div>
+                <div className="col-span-3">${Math.abs(Number(m.amount || m.delta || 0)).toFixed(2)}</div>
+                <div className="col-span-3">{m.createdBy || m.user || '—'}</div>
+              </div>
+            ))}
+            {(!loading && rows.length === 0) && (<div className="px-3 py-6 text-sm text-muted-foreground">No movements found.</div>)}
+          </div>
+        </div>
+        {(() => { const s = total === 0 ? 0 : startIdx + 1; const e = Math.min(total, startIdx + pageSize); return (
+          <div className="flex items-center justify-between mt-3 text-sm">
+            <div className="text-muted-foreground">{total === 0 ? '0' : `${s}-${e}`} of {total}</div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</Button>
+              <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+            </div>
+          </div>
+        ); })()}
+      </CardContent>
+    </Card>
+  );
+};
