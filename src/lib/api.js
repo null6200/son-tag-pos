@@ -1,7 +1,8 @@
 function inferBaseUrl() {
+  // 1) Prefer explicit VITE_API_URL at build time (Vite inlines this)
   try {
-    if (import.meta?.env?.VITE_API_URL) {
-      const raw = import.meta.env.VITE_API_URL;
+    const raw = (import.meta && import.meta.env && import.meta.env.VITE_API_URL) || '';
+    if (raw) {
       try {
         const u = new URL(raw);
         // If both are loopback but hosts differ (localhost vs 127.0.0.1), normalize to current page host
@@ -10,21 +11,16 @@ function inferBaseUrl() {
           const isLoopback = (x) => x === 'localhost' || x === '127.0.0.1';
           if (isLoopback(u.hostname) && isLoopback(h) && u.hostname !== h) {
             u.hostname = h;
-            return u.toString().replace(/\/$/, '');
           }
         }
-        return raw;
-      } catch { return raw; }
+        return u.toString().replace(/\/$/, '');
+      } catch {
+        return String(raw).replace(/\/$/, '');
+      }
     }
   } catch {}
 
-function readLocalToken() {
-  try {
-    if (typeof window === 'undefined') return null;
-    const t = window.localStorage.getItem('access_token') || window.sessionStorage.getItem('access_token');
-    return t || null;
-  } catch { return null; }
-}
+  // 2) Fallbacks: infer from current window location
   try {
     if (typeof window !== 'undefined' && window.location) {
       const { protocol, hostname, port } = window.location;
@@ -34,7 +30,16 @@ function readLocalToken() {
       return `${protocol}//${hostname}${port ? ':' + port : ''}`;
     }
   } catch {}
+  // 3) Last resort
   return 'http://localhost:4000';
+}
+
+function readLocalToken() {
+  try {
+    if (typeof window === 'undefined') return null;
+    const t = window.localStorage.getItem('access_token') || window.sessionStorage.getItem('access_token');
+    return t || null;
+  } catch { return null; }
 }
 
 const BASE_URL = inferBaseUrl();
