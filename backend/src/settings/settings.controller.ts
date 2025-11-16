@@ -9,11 +9,12 @@ import { PermissionsGuard } from '../auth/permissions.guard';
 import { Permissions } from '../auth/permissions.decorator';
 import { SettingsService } from './settings.service';
 
-@UseGuards(JwtAuthGuard)
 @Controller('settings')
 export class SettingsController {
   constructor(private readonly svc: SettingsService) {}
 
+  // Protected: requires auth
+  @UseGuards(JwtAuthGuard)
   @Get()
   get(@Query('branchId') branchId?: string) {
     return this.svc.get(branchId);
@@ -26,6 +27,7 @@ export class SettingsController {
   }
 
   @UseGuards(PermissionsGuard)
+  @UseGuards(JwtAuthGuard)
   @Put()
   @Permissions('edit_settings')
   set(@Body() dto: any) {
@@ -35,6 +37,7 @@ export class SettingsController {
 
   // Upload logo file and return a URL that this backend can serve
   @UseGuards(PermissionsGuard)
+  @UseGuards(JwtAuthGuard)
   @Post('logo')
   @Permissions('edit_settings')
   @UseInterceptors(FileInterceptor('file', {

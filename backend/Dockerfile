@@ -7,11 +7,11 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy only backend sources into /app
-COPY backend/package*.json ./
+# With compose build context=./backend, copy files from context root
+COPY package*.json ./
 # Install with devDependencies so Nest CLI is available for build
 RUN npm install --include=dev && npm install -g @nestjs/cli prisma@6.18.0
-COPY backend/. ./
+COPY . ./
 
 # Generate Prisma Client at build time so engine binaries are bundled
 RUN prisma generate --schema=prisma/schema.prisma

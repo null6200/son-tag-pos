@@ -109,7 +109,8 @@ const UserManagement = ({ user }) => {
         toast({ title: 'User Deleted', description: 'User removed permanently.' });
       }
     } catch (e) {
-      toast({ title: 'Delete failed', description: String(e?.message || e), variant: 'destructive' });
+      const msg = (e && e.body && (e.body.message || e.body.error)) || e?.message || e;
+      toast({ title: 'Delete failed', description: String(msg), variant: 'destructive' });
     }
   };
 

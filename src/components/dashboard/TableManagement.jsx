@@ -129,6 +129,21 @@ const TableManagement = ({ user }) => {
 
     (async () => {
       try {
+        // Prevent duplicate names within the same section (case-insensitive)
+        const normalizedNewName = (tableName || '').trim().toLowerCase();
+        const duplicate = (tables || []).some(t =>
+          (t?.sectionId || t?.section) === tableSection &&
+          t?.id !== (currentTable?.id) &&
+          String(t?.name || '').trim().toLowerCase() === normalizedNewName
+        );
+        if (duplicate) {
+          toast({
+            variant: 'destructive',
+            title: 'Duplicate Table',
+            description: 'A table with this name already exists in the selected section.',
+          });
+          return;
+        }
         if (currentTable) {
           await api.tables.update(currentTable.id, { name: tableName, sectionId: tableSection, capacity: tableCapacity ? parseInt(tableCapacity) : undefined, status: tableStatus });
           toast({ title: "Table Updated", description: "The table has been successfully updated." });
@@ -139,7 +154,8 @@ const TableManagement = ({ user }) => {
         await refreshTables();
         setIsDialogOpen(false);
       } catch (e) {
-        toast({ title: 'Save failed', description: String(e?.message || e), variant: 'destructive' });
+        const msg = (e && e.body && (e.body.message || e.body.error)) || e?.message || e;
+        toast({ title: 'Save failed', description: String(msg), variant: 'destructive' });
       }
     })();
   };
