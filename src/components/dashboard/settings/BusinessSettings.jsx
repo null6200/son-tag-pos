@@ -41,15 +41,23 @@ const BusinessSettings = ({ onBack, user }) => {
   });
   const [logoPreview, setLogoPreview] = useState('');
   const [logoFile, setLogoFile] = useState(null);
+  const [resolvedBranchId, setResolvedBranchId] = useState('');
   const fileInputRef = useRef(null);
   // moved Override PIN to Settings page
 
   useEffect(() => {
     (async () => {
       try {
-        const branchId = user?.branchId;
-        if (!branchId) return;
-        const data = await api.settings.get({ branchId });
+        let bid = user?.branchId;
+        if (!bid) {
+          try {
+            const me = await api.me();
+            bid = me?.branchId || '';
+          } catch {}
+        }
+        setResolvedBranchId(bid || '');
+        if (!bid) return;
+        const data = await api.settings.get({ branchId: bid });
         if (data) {
           setSettings(prev => ({ ...prev, ...data, logo: data.logoUrl || '' }));
           if (data.logoUrl) setLogoPreview(data.logoUrl);
@@ -85,8 +93,7 @@ const BusinessSettings = ({ onBack, user }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const branchId = user?.branchId;
-      if (!branchId) { toast({ title: 'Missing branch', description: 'No active branch to save settings to.', variant: 'destructive' }); return; }
+      const branchId = user?.branchId || resolvedBranchId || '';
       let logoUrl = settings.logo || '';
       if (logoFile) {
         try {
@@ -97,14 +104,15 @@ const BusinessSettings = ({ onBack, user }) => {
         }
       }
       await api.settings.update({
-        branchId,
+        // branchId intentionally omitted when not available; backend will derive from auth user
+        ...(branchId ? { branchId } : {}),
         businessName: settings.businessName,
         currency: settings.currency,
         logoUrl,
       });
       // persist to localStorage for immediate UI update
       try {
-        const s = await api.settings.get({ branchId });
+        const s = await api.settings.get(branchId ? { branchId } : {});
         const info = {
           name: s?.businessName || settings.businessName,
           logoUrl: s?.logoUrl || logoUrl || '',
