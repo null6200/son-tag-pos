@@ -385,6 +385,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       try { const backendId = draft.backendId || draft.id; if (backendId) await api.drafts.remove(String(backendId)); } catch {}
       toast({ title: 'Suspended bill settled', description: `${draft.name} marked as PAID.` });
       try { await fetchDrafts(draftsPage); } catch {}
+      // Notify other views (e.g., Sales List) to refresh immediately
+      try { window.dispatchEvent(new CustomEvent('orders:changed', { detail: { id: orderId, action: 'paid' } })); } catch {}
     } catch (e) {
       toast({ title: 'Settle failed', description: String(e?.message || e), variant: 'destructive' });
     }

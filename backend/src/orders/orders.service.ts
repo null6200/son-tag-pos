@@ -70,6 +70,7 @@ export class OrdersService {
         payments: true,
         branch: { select: { id: true, name: true } },
         section: { select: { id: true, name: true } },
+        table: { select: { id: true, name: true } },
         drafts: { select: { id: true, subtotal: true, tax: true, discount: true, total: true, serviceType: true, waiterId: true } },
       } as any,
       orderBy: { createdAt: 'desc' },
@@ -79,18 +80,19 @@ export class OrdersService {
       const invoice = o.invoice_no || o.invoiceNo || o.receiptNo || (typeof o.orderNumber !== 'undefined' ? String(o.orderNumber) : undefined);
       const status = String(o.status || '').toUpperCase();
       const draft = Array.isArray(o.drafts) && o.drafts.length > 0 ? o.drafts[0] : null;
+      const emptyService = !o.serviceType || !String(o.serviceType).trim();
       const needsDraftFallback =
         (o.subtotal == null || Number(o.subtotal) === 0) ||
         (o.tax == null || (Number(o.tax) === 0 && draft?.tax && Number(draft.tax) > 0)) ||
         (o.discount == null || (Number(o.discount) === 0 && draft?.discount && Number(draft.discount) > 0)) ||
-        (o.serviceType == null && !!draft?.serviceType);
+        ((o.serviceType == null || emptyService) && !!draft?.serviceType);
       const merged: any = { ...o };
       if (((status === 'SUSPENDED' || status === 'PENDING_PAYMENT') || needsDraftFallback) && draft) {
         if (draft.subtotal != null) merged.subtotal = draft.subtotal as any;
         if (draft.tax != null) merged.tax = draft.tax as any;
         if (draft.discount != null) merged.discount = draft.discount as any;
         if (draft.total != null) merged.total = draft.total as any;
-        if (!merged.serviceType && draft.serviceType) merged.serviceType = draft.serviceType;
+        if (emptyService && draft.serviceType) merged.serviceType = draft.serviceType;
         if ((!merged.waiterName || !String(merged.waiterName).trim()) && draft.waiterId) merged.waiterId = draft.waiterId;
       }
       // Normalize status: if sum(payments) >= total, mark PAID for list display
@@ -120,6 +122,7 @@ export class OrdersService {
         user: { select: { id: true, username: true, firstName: true, surname: true } },
         branch: { select: { id: true, name: true } },
         section: { select: { id: true, name: true } },
+        table: { select: { id: true, name: true } },
         drafts: { select: { id: true, subtotal: true, discount: true, tax: true, total: true, serviceType: true, waiterId: true } },
       } as any,
     });
@@ -140,18 +143,19 @@ export class OrdersService {
     }
 
     const enriched: any = { ...(order as any) };
+    const emptyService = !enriched.serviceType || !String(enriched.serviceType).trim();
     const needsDraftFallback =
       (enriched.subtotal == null || Number(enriched.subtotal) === 0) ||
       (enriched.tax == null || (Number(enriched.tax) === 0 && draft?.tax && Number(draft.tax) > 0)) ||
       (enriched.discount == null || (Number(enriched.discount) === 0 && draft?.discount && Number(draft.discount) > 0)) ||
-      (enriched.serviceType == null && !!draft?.serviceType);
+      ((enriched.serviceType == null || emptyService) && !!draft?.serviceType);
     if (((status === 'SUSPENDED' || status === 'PENDING_PAYMENT') || needsDraftFallback) && draft) {
       // Use draft financials when present
       if (draft.subtotal != null) enriched.subtotal = draft.subtotal as any;
       if (draft.tax != null) enriched.tax = draft.tax as any;
       if (draft.discount != null) enriched.discount = draft.discount as any;
       if (draft.total != null) enriched.total = draft.total as any;
-      if (!enriched.serviceType && draft.serviceType) enriched.serviceType = draft.serviceType;
+      if (emptyService && draft.serviceType) enriched.serviceType = draft.serviceType;
       // If waiter missing, we can keep waiterId (frontend displays name via waiter field)
       if ((!waiterName || !waiterName.trim()) && draft.waiterId) {
         try {
@@ -483,33 +487,35 @@ export class OrdersService {
 
       const isLocking = this.isLockingStatus(status);
       const data: any = { status: status as any };
-      if (!isLocking) data.tableId = null;
+      // Preserve table for PAID orders so receipts can show table info
+      if (!isLocking && status !== 'PAID') data.tableId = null;
       // If moving to PAID, merge financials/meta from latest draft when order is missing values and recompute total
       if (status === 'PAID') {
         const draft = await tx.draft.findFirst({ where: { orderId }, orderBy: { updatedAt: 'desc' } });
         if (draft) {
           const o: any = order as any;
-          const ordSub = Number(o.subtotal || 0);
-          const ordTax = Number(o.tax || 0);
-          const ordDisc = Number(o.discount || 0);
-          const ordTotal = Number(o.total || 0);
-          const dSub = draft.subtotal != null ? Number(draft.subtotal as any) : null;
-          const dTax = draft.tax != null ? Number(draft.tax as any) : null;
-          const dDisc = draft.discount != null ? Number(draft.discount as any) : null;
-          const dTotal = draft.total != null ? Number(draft.total as any) : null;
-          const sub = ordSub > 0 ? ordSub : (dSub ?? ordSub);
-          const tax = ordTax > 0 ? ordTax : (dTax ?? ordTax);
-          const disc = ordDisc > 0 ? ordDisc : (dDisc ?? ordDisc);
-          let finalTotal = ordTotal;
-          // Recompute total from parts if any were filled from draft
-          if ((sub !== ordSub) || (tax !== ordTax) || (disc !== ordDisc) || (ordTotal === 0 && dTotal != null)) {
-            finalTotal = sub + tax - disc;
-          }
+          const ordSub = Number(o.subtotal ?? 0);
+          const ordTax = Number(o.tax ?? 0);
+          const ordDisc = Number(o.discount ?? 0);
+          const ordTotal = Number(o.total ?? 0);
+          const dSub = draft.subtotal !== null && draft.subtotal !== undefined ? Number(draft.subtotal as any) : null;
+          const dTax = draft.tax !== null && draft.tax !== undefined ? Number(draft.tax as any) : null;
+          const dDisc = draft.discount !== null && draft.discount !== undefined ? Number(draft.discount as any) : null;
+          const dTotal = draft.total !== null && draft.total !== undefined ? Number(draft.total as any) : null;
+
+          // Prefer draft values when present; otherwise keep order values
+          const sub = dSub != null ? dSub : ordSub;
+          const tax = dTax != null ? dTax : ordTax;
+          const disc = dDisc != null ? dDisc : ordDisc;
+          const finalTotal = dTotal != null ? dTotal : (sub + tax - disc);
+
           data.subtotal = String(sub) as any;
           data.tax = String(tax) as any;
           data.discount = String(disc) as any;
           data.total = String(finalTotal) as any;
-          if (!o.serviceType && draft.serviceType) data.serviceType = draft.serviceType;
+          // Backfill sectionId and serviceType if missing or empty on order
+          if (!o.sectionId && draft.sectionId) data.sectionId = draft.sectionId as any;
+          if ((!o.serviceType || !String(o.serviceType).trim()) && draft.serviceType) data.serviceType = draft.serviceType;
           // waiter fallback from order.waiterId or draft.waiterId
           let waiterName: string | null = o.waiterName as any;
           let waiterId: string | null = o.waiterId as any;
@@ -605,6 +611,57 @@ export class OrdersService {
           reference: dto.reference || null,
         },
       });
+      // After recording payment, backfill from latest draft and auto-mark PAID when fully paid
+      const payments = await tx.payment.findMany({ where: { orderId }, select: { amount: true } });
+      const paid = payments.reduce((a, p) => a + Number(p.amount || 0), 0);
+      const draft = await tx.draft.findFirst({ where: { orderId }, orderBy: { updatedAt: 'desc' } });
+      const data: any = {};
+      if (draft) {
+        const o: any = order as any;
+        const ordSub = Number(o.subtotal ?? 0);
+        const ordTax = Number(o.tax ?? 0);
+        const ordDisc = Number(o.discount ?? 0);
+        const dSub = draft.subtotal !== null && draft.subtotal !== undefined ? Number(draft.subtotal as any) : null;
+        const dTax = draft.tax !== null && draft.tax !== undefined ? Number(draft.tax as any) : null;
+        const dDisc = draft.discount !== null && draft.discount !== undefined ? Number(draft.discount as any) : null;
+        const dTotal = draft.total !== null && draft.total !== undefined ? Number(draft.total as any) : null;
+        const sub = dSub != null ? dSub : ordSub;
+        const tax = dTax != null ? dTax : ordTax;
+        const disc = dDisc != null ? dDisc : ordDisc;
+        const finalTotal = dTotal != null ? dTotal : (sub + tax - disc);
+        data.subtotal = String(sub) as any;
+        data.tax = String(tax) as any;
+        data.discount = String(disc) as any;
+        data.total = String(finalTotal) as any;
+        if (!(order as any).sectionId && draft.sectionId) data.sectionId = draft.sectionId as any;
+        if ((!(order as any).serviceType || !String((order as any).serviceType).trim()) && draft.serviceType) data.serviceType = draft.serviceType;
+        let waiterName: string | null = (order as any).waiterName as any;
+        let waiterId: string | null = (order as any).waiterId as any;
+        if (!waiterId && (draft as any).waiterId) waiterId = (draft as any).waiterId;
+        if ((!waiterName || !waiterName.trim()) && waiterId) {
+          try {
+            const w = await tx.user.findUnique({ where: { id: waiterId }, select: { username: true, firstName: true, surname: true } });
+            if (w) waiterName = (w.firstName || w.surname) ? `${w.firstName || ''} ${w.surname || ''}`.trim() : (w.username || null);
+          } catch {}
+        }
+        if (waiterId) data.waiterId = waiterId;
+        if (waiterName) data.waiterName = waiterName as any;
+        // Auto set PAID when fully paid
+        if (paid >= finalTotal && finalTotal > 0) data.status = 'PAID' as any;
+      } else {
+        // No draft: still auto set PAID if payments cover recorded order total
+        const ordTotal = Number((order as any).total ?? 0);
+        if (ordTotal > 0 && paid >= ordTotal) data.status = 'PAID' as any;
+      }
+
+      // Preserve table for PAID orders
+      if (data.status && String(data.status).toUpperCase() === 'PAID') {
+        // do not null tableId
+      } else {
+        // keep as-is
+      }
+
+      await tx.order.update({ where: { id: orderId }, data });
       return tx.order.findUnique({ where: { id: orderId }, include: { payments: true, items: true } as any });
     });
   }
