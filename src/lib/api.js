@@ -430,6 +430,19 @@ export const api = {
     cashMovements: {
       list(params = {}) { return api.reports.list({ ...params, type: 'cash_movements' }); },
     },
+    shiftRegisters({ branchId, sectionId, userId, status, from, to, limit, offset } = {}) {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      if (sectionId) params.set('sectionId', sectionId);
+      if (userId) params.set('userId', userId);
+      if (status) params.set('status', status);
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (limit) params.set('limit', String(limit));
+      if (offset) params.set('offset', String(offset));
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request(`/reports/register${q}`);
+    },
   },
   discounts: {
     list({ branchId } = {}) {

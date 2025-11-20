@@ -143,7 +143,20 @@ export class ReportsController {
   @UseGuards(PermissionsGuard)
   @Get('register')
   @Permissions('view_register_report')
-  async register(@Query() q: any) { return { ok: true, type: 'register', q }; }
+  async register(
+    @Query('branchId') branchId?: string,
+    @Query('sectionId') sectionId?: string,
+    @Query('userId') userId?: string,
+    @Query('status') status?: 'OPEN' | 'CLOSED' | 'ALL',
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const lim = Math.max(1, Math.min(parseInt(String(limit ?? '50')) || 50, 200));
+    const off = Math.max(0, parseInt(String(offset ?? '0')) || 0);
+    return this.reports.shiftRegisterList({ branchId, sectionId, userId, status: (status as any) || 'ALL', from, to, limit: lim, offset: off });
+  }
 
   @UseGuards(PermissionsGuard)
   @Get('sales-rep')

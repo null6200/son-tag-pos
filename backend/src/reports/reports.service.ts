@@ -534,6 +534,164 @@ export class ReportsService {
     return { items, total };
   }
 
+  async shiftRegisterList(params: { branchId?: string; sectionId?: string; userId?: string; status?: 'OPEN' | 'CLOSED' | 'ALL'; from?: string; to?: string; limit: number; offset: number }) {
+    const { sectionId, userId } = params;
+    let { branchId, status = 'ALL', from, to, limit, offset } = params;
+    const dateFilter = {
+      gte: from ? new Date(from) : undefined,
+      lte: to ? new Date(to) : undefined,
+    } as { gte?: Date; lte?: Date };
+
+    if (!branchId) {
+      const first = await this.prisma.branch.findFirst({ select: { id: true }, orderBy: { createdAt: 'asc' } });
+      branchId = first?.id || undefined;
+    }
+    if (!branchId) throw new Error('branchId is required');
+
+    const whereShift: any = { branchId };
+    if (sectionId) whereShift.sectionId = sectionId;
+    if (status && status !== 'ALL') whereShift.status = status;
+    if (from || to) {
+      whereShift.openedAt = dateFilter;
+    }
+    if (userId) whereShift.openedById = userId;
+
+    const [shifts, total] = await Promise.all([
+      this.prisma.shift.findMany({
+        where: whereShift,
+        orderBy: { openedAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      this.prisma.shift.count({ where: whereShift }),
+    ]);
+
+    if (!shifts.length) {
+      return {
+        items: [],
+        total,
+        totals: {
+          totalCash: 0,
+          totalCard: 0,
+          totalTransfer: 0,
+          totalOther: 0,
+          totalCredit: 0,
+          grandTotal: 0,
+        },
+      } as any;
+    }
+
+    // Preload branches, sections, and users for display
+    const branchIds = Array.from(new Set(shifts.map(s => s.branchId).filter(Boolean))) as string[];
+    const sectionIds = Array.from(new Set(shifts.map(s => s.sectionId).filter(Boolean))) as string[];
+    const userIds = Array.from(new Set(shifts.map(s => s.openedById).filter(Boolean))) as string[];
+
+    const [branches, sections, users] = await Promise.all([
+      branchIds.length ? this.prisma.branch.findMany({ where: { id: { in: branchIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+      sectionIds.length ? this.prisma.section.findMany({ where: { id: { in: sectionIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+      userIds.length ? this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, username: true, email: true, firstName: true, surname: true } }) : Promise.resolve([]),
+    ]);
+
+    const branchById = new Map(branches.map(b => [b.id, b.name] as [string, string]));
+    const sectionById = new Map(sections.map(s => [s.id, s.name] as [string, string]));
+    const userById = new Map(users.map(u => [u.id, u] as [string, typeof users[number]]));
+
+    let totalCash = 0;
+    let totalCard = 0;
+    let totalTransfer = 0;
+    let totalOther = 0;
+    let totalCredit = 0;
+
+    const items = [] as any[];
+
+    for (const shift of shifts) {
+      const fromShift = shift.openedAt;
+      const toShift = shift.closedAt || new Date();
+      const shiftWindow = { gte: fromShift, lte: toShift } as { gte: Date; lte: Date };
+
+      // Payments in this shift window
+      const payments = await this.prisma.payment.findMany({
+        where: {
+          createdAt: shiftWindow,
+          order: {
+            branchId: shift.branchId,
+            ...(shift.sectionId ? { sectionId: shift.sectionId } : {}),
+          },
+        },
+        select: { amount: true, method: true },
+      });
+
+      let cash = 0;
+      let card = 0;
+      let transfer = 0;
+      let other = 0;
+      for (const p of payments) {
+        const amt = parseFloat(String(p.amount ?? 0));
+        const m = String(p.method || '').toLowerCase();
+        if (m === 'cash') cash += amt;
+        else if (m === 'card') card += amt;
+        else if (m === 'transfer') transfer += amt;
+        else other += amt;
+      }
+
+      // Credit / debt during window: SUSPENDED or PENDING_PAYMENT orders
+      const creditOrders = await this.prisma.order.findMany({
+        where: {
+          createdAt: shiftWindow,
+          status: { in: ['SUSPENDED', 'PENDING_PAYMENT'] as any },
+          ...(shift.branchId ? { branchId: shift.branchId } : {}),
+          ...(shift.sectionId ? { sectionId: shift.sectionId } : {}),
+        },
+        select: { total: true },
+      });
+      const credit = creditOrders.reduce((acc, o) => acc + parseFloat(String(o.total ?? 0)), 0);
+
+      const grand = cash + card + transfer + other;
+
+      totalCash += cash;
+      totalCard += card;
+      totalTransfer += transfer;
+      totalOther += other;
+      totalCredit += credit;
+
+      const user = shift.openedById ? userById.get(shift.openedById) : null;
+      const name = user ? ((user.firstName || '') + (user.surname ? ` ${user.surname}` : '') || user.username) : (shift as any).openedById || 'Unknown';
+
+      items.push({
+        id: shift.id,
+        openedAt: shift.openedAt,
+        closedAt: shift.closedAt,
+        date: shift.openedAt,
+        branchId: shift.branchId,
+        branchName: shift.branchId ? (branchById.get(shift.branchId) || '') : '',
+        sectionId: shift.sectionId,
+        sectionName: shift.sectionId ? (sectionById.get(shift.sectionId) || '') : '',
+        userId: shift.openedById,
+        userName: name,
+        userEmail: user?.email || null,
+        totalCash: cash,
+        totalCard: card,
+        totalTransfer: transfer,
+        totalOther: other,
+        totalCredit: credit,
+        grandTotal: grand,
+      });
+    }
+
+    return {
+      items,
+      total,
+      totals: {
+        totalCash,
+        totalCard,
+        totalTransfer,
+        totalOther,
+        totalCredit,
+        grandTotal: totalCash + totalCard + totalTransfer + totalOther,
+      },
+    } as any;
+  }
+
   async shiftReport(params: { shiftId?: string; branchId?: string; sectionId?: string }) {
     // Resolve shift
     const shift = params.shiftId
