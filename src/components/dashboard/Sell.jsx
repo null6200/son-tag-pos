@@ -137,11 +137,12 @@ const SalesList = ({ onPrint, user }) => {
     const handleViewDetails = async (sale) => {
         try {
             const full = await api.orders?.get?.(String(sale.id));
-            const merged = { ...sale, ...(full || {}) };
-            setSelectedSale(merged);
+            // Prefer full backend order object so relations like table are intact
+            const selected = full || sale;
+            setSelectedSale(selected);
             setIsDetailViewOpen(true);
         } catch (e) {
-            // fallback to minimal object
+            // Fallback to minimal object from list if full fetch fails
             setSelectedSale(sale);
             setIsDetailViewOpen(true);
             toast({ title: 'Could not load full order', description: String(e?.message || e), variant: 'destructive' });
@@ -301,7 +302,7 @@ const SaleDetailModal = ({ isOpen, onClose, sale, onPrint }) => {
                     <InfoItem label="Branch" value={sale.branch?.name} />
                     <InfoItem label="Section" value={sectionName} />
                     <InfoItem label="Service Type" value={sale.serviceType} />
-                    {sale.table && <InfoItem label="Table" value={sale.table?.name || sale.table} />}
+                    <InfoItem label="Table" value={sale.table?.name || sale.table} />
 
                     <h3 className="font-bold pt-4 border-t mt-4">Items ({(sale.items || []).length})</h3>
                     <div className="space-y-2">

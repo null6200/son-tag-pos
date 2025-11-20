@@ -21,8 +21,17 @@ const TaxSettings = ({ onBack }) => {
   useEffect(() => {
     (async () => {
       try {
-        const data = await api.taxes?.get?.();
-        if (data) setTaxSettings(prev => ({ ...prev, ...data }));
+        const data = await api.settings.get();
+        if (data) {
+          setTaxSettings(prev => ({
+            ...prev,
+            tax1Name: data.tax1Name || '',
+            tax1Number: data.tax1Number ?? '',
+            tax2Name: data.tax2Name || '',
+            tax2Number: data.tax2Number ?? '',
+            enableInlineTax: !!data.enableInlineTax,
+          }));
+        }
       } catch {}
     })();
   }, []);
@@ -39,7 +48,7 @@ const TaxSettings = ({ onBack }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.taxes?.update?.(taxSettings);
+      await api.settings.update(taxSettings);
       toast({ title: '✅ Settings Updated', description: 'Your tax settings have been successfully saved.' });
     } catch (err) {
       toast({ title: 'Save failed', description: String(err?.message || err), variant: 'destructive' });

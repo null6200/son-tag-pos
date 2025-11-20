@@ -38,6 +38,7 @@ import { ServiceTypesModule } from './service-types/service-types.module';
 import { DraftsModule } from './drafts/drafts.module';
 import { SettingsModule } from './settings/settings.module';
 import { SubcategoriesModule } from './subcategories/subcategories.module';
+import { DiscountsModule } from './discounts/discounts.module';
 import { UploadsController } from './uploads.controller';
 
 // Resolve the frontend dist folder at the project root in both dev and prod
@@ -94,6 +95,7 @@ const STATIC_MODULES = [
     DraftsModule,
     SettingsModule,
     SubcategoriesModule,
+    DiscountsModule,
   ],
   controllers: [AppController, HealthController, AuditController, UploadsController],
   providers: [

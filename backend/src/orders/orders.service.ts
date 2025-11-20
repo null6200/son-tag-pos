@@ -123,7 +123,7 @@ export class OrdersService {
         branch: { select: { id: true, name: true } },
         section: { select: { id: true, name: true } },
         table: { select: { id: true, name: true } },
-        drafts: { select: { id: true, subtotal: true, discount: true, tax: true, total: true, serviceType: true, waiterId: true } },
+        drafts: { select: { id: true, subtotal: true, discount: true, tax: true, total: true, serviceType: true, waiterId: true, tableId: true, sectionId: true } },
       } as any,
     });
     if (!order) throw new BadRequestException('Order not found');
@@ -163,6 +163,22 @@ export class OrdersService {
           if (w) waiterName = (w.firstName || w.surname) ? `${w.firstName || ''} ${w.surname || ''}`.trim() : (w.username || null);
         } catch {}
       }
+    }
+
+    // If the persisted order lost its tableId (e.g. older logic cleared it on PAID), but the
+    // latest draft still has tableId, backfill tableId and table so Sales Details can always
+    // show the correct table even for finalized credit sales.
+    if (!enriched.tableId && draft?.tableId) {
+      enriched.tableId = draft.tableId as any;
+      try {
+        const t = await this.prisma.table.findUnique({
+          where: { id: draft.tableId },
+          select: { id: true, name: true },
+        });
+        if (t) {
+          (enriched as any).table = t as any;
+        }
+      } catch {}
     }
 
     return { ...enriched, displayInvoice: invoice, waiter: waiterName } as any;
@@ -487,13 +503,23 @@ export class OrdersService {
 
       const isLocking = this.isLockingStatus(status);
       const data: any = { status: status as any };
-      // Preserve table for PAID orders so receipts can show table info
-      if (!isLocking && status !== 'PAID') data.tableId = null;
-      // If moving to PAID, merge financials/meta from latest draft when order is missing values and recompute total
+      // If moving to PAID, merge financials/meta from latest draft when order is missing values and recompute total.
+      // Also *always* preserve/restore tableId from either the order or the draft so it never disappears on PAID.
       if (status === 'PAID') {
         const draft = await tx.draft.findFirst({ where: { orderId }, orderBy: { updatedAt: 'desc' } });
+        const o: any = order as any;
+        try {
+          // TEMP-DEBUG: trace tableId when updating status to PAID
+          console.log('[OrdersService.updateStatus][PAID]', {
+            orderId,
+            statusFrom: order.status,
+            statusTo: status,
+            tableFromOrder: o.tableId || null,
+            tableFromDraft: draft ? (draft as any).tableId || null : null,
+          });
+        } catch {}
+
         if (draft) {
-          const o: any = order as any;
           const ordSub = Number(o.subtotal ?? 0);
           const ordTax = Number(o.tax ?? 0);
           const ordDisc = Number(o.discount ?? 0);
@@ -513,6 +539,10 @@ export class OrdersService {
           data.tax = String(tax) as any;
           data.discount = String(disc) as any;
           data.total = String(finalTotal) as any;
+          // Always preserve/restore tableId for PAID orders
+          const tableFromOrder = o.tableId || null;
+          const tableFromDraft = (draft as any).tableId || null;
+          if (tableFromOrder || tableFromDraft) data.tableId = tableFromOrder || tableFromDraft;
           // Backfill sectionId and serviceType if missing or empty on order
           if (!o.sectionId && draft.sectionId) data.sectionId = draft.sectionId as any;
           if ((!o.serviceType || !String(o.serviceType).trim()) && draft.serviceType) data.serviceType = draft.serviceType;
@@ -528,7 +558,20 @@ export class OrdersService {
           }
           if (waiterId) data.waiterId = waiterId;
           if (waiterName) data.waiterName = waiterName as any;
+        } else {
+          // No draft: still make sure tableId is preserved from the existing order
+          const tableFromOrder = o.tableId || null;
+          if (tableFromOrder) data.tableId = tableFromOrder;
         }
+
+        try {
+          // TEMP-DEBUG: final payload when updating to PAID
+          console.log('[OrdersService.updateStatus][PAID][UPDATE]', {
+            orderId,
+            statusTo: status,
+            finalTableId: data.tableId ?? null,
+          });
+        } catch {}
       }
       return tx.order.update({ where: { id: orderId }, data });
     });
@@ -616,6 +659,17 @@ export class OrdersService {
       const paid = payments.reduce((a, p) => a + Number(p.amount || 0), 0);
       const draft = await tx.draft.findFirst({ where: { orderId }, orderBy: { updatedAt: 'desc' } });
       const data: any = {};
+      try {
+        // TEMP-DEBUG: trace tableId before applying payment logic
+        console.log('[OrdersService.addPayment][START]', {
+          orderId,
+          orderStatus: order.status,
+          orderTableId: (order as any).tableId || null,
+          hasDraft: !!draft,
+          draftTableId: draft ? (draft as any).tableId || null : null,
+          paidAmount: paid,
+        });
+      } catch {}
       if (draft) {
         const o: any = order as any;
         const ordSub = Number(o.subtotal ?? 0);
@@ -646,19 +700,27 @@ export class OrdersService {
         }
         if (waiterId) data.waiterId = waiterId;
         if (waiterName) data.waiterName = waiterName as any;
+        // Always preserve/restore tableId for PAID orders when we end up marking it here
+        const tableFromOrder = (order as any).tableId || null;
+        const tableFromDraft = (draft as any).tableId || null;
+        if (tableFromOrder || tableFromDraft) data.tableId = tableFromOrder || tableFromDraft;
         // Auto set PAID when fully paid
         if (paid >= finalTotal && finalTotal > 0) data.status = 'PAID' as any;
       } else {
         // No draft: still auto set PAID if payments cover recorded order total
         const ordTotal = Number((order as any).total ?? 0);
-        if (ordTotal > 0 && paid >= ordTotal) data.status = 'PAID' as any;
+        if (ordTotal > 0 && paid >= ordTotal) {
+          data.status = 'PAID' as any;
+          // Preserve tableId from the existing order when auto-marking PAID
+          if ((order as any).tableId) data.tableId = (order as any).tableId;
+        }
       }
 
-      // Preserve table for PAID orders
+      // FINAL SAFEGUARD: if this update is marking the order as PAID, always keep the
+      // current order.tableId on the record so that table info is never lost.
       if (data.status && String(data.status).toUpperCase() === 'PAID') {
-        // do not null tableId
-      } else {
-        // keep as-is
+        const ordTable = (order as any).tableId || null;
+        if (ordTable) data.tableId = ordTable;
       }
 
       await tx.order.update({ where: { id: orderId }, data });

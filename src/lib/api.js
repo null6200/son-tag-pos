@@ -431,6 +431,23 @@ export const api = {
       list(params = {}) { return api.reports.list({ ...params, type: 'cash_movements' }); },
     },
   },
+  discounts: {
+    list({ branchId } = {}) {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branchId', branchId);
+      const q = params.toString() ? `?${params.toString()}` : '';
+      return request(`/discounts${q}`);
+    },
+    create(data) {
+      return request('/discounts', { method: 'POST', body: data });
+    },
+    update(id, data) {
+      return request(`/discounts/${encodeURIComponent(id)}`, { method: 'PUT', body: data });
+    },
+    remove(id) {
+      return request(`/discounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
   async login({ username, password }) {
     return request('/auth/login', { method: 'POST', body: { username, password } });
   },

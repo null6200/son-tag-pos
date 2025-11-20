@@ -258,7 +258,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   // Disable localStorage persistence for drafts; backend is source of truth
 
   // Helper to map backend drafts to UI shape
-  const mapDrafts = (rows) => (rows || []).map(r => ({
+  const mapDrafts = (rows) => rows.map((r) => ({
     id: r.id,
     backendId: r.id,
     name: r.name,
@@ -274,7 +274,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     waiterId: r.waiterId || null,
     orderId: r.orderId || null,
     discount: { type: 'percentage', value: 0 },
-    taxRate: 10,
+    taxRate: 0,
+
     isSuspended: r.status === 'SUSPENDED',
     reservationKey: r.reservationKey || null,
     createdAt: r.createdAt,
@@ -476,7 +477,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [sidebarCategories, setSidebarCategories] = useState(categories);
-  const [taxRate, setTaxRate] = useState(10);
+  const [taxRate, setTaxRate] = useState(0);
   const [discount, setDiscount] = useState({ type: 'percentage', value: 0 });
   const [customers, setCustomers] = useState([]);
   const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
@@ -904,7 +905,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             name: t.name || t.code || t.id,
             sectionId: t.sectionId || t.section?.id || t.section,
             sectionName: t.section?.name || '',
-            status: (t.locked || String(t.status || '').toLowerCase() === 'locked') ? 'occupied' : 'available',
+            status: ((String(t.status || '').toLowerCase() === 'locked') || (String(t.status || '').toLowerCase() === 'occupied') || !!t.locked) ? 'occupied' : 'available',
             updatedAt: t.updatedAt || t.updated_at || null,
           })));
         }
@@ -1084,13 +1085,6 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     }
     
     const currentSectionName = branchSections.find(s => s.id === currentSection)?.name || '';
-    const price = (sectionPrices[product.id]?.[currentSectionName] ?? product.price);
-
-    if (price === undefined || price === null) {
-        toast({ title: 'Price Not Set', description: `Price for ${product.name} in ${currentSectionName} is not set.`, variant: 'destructive' });
-        return;
-    }
-
     const stock = Number(stockLevels[product.id]?.[currentSectionName] ?? 0);
     const existingCartItem = cart.find(item => item.id === product.id);
     const currentCartQty = existingCartItem ? existingCartItem.qty : 0;
@@ -1110,7 +1104,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     try { adjustLocalSectionStock(product.id, -1); } catch {}
     setCart(prev => {
       if (existingCartItem) return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
-      return [...prev, { ...product, qty: 1, price, station: product.station }];
+      return [...prev, { ...product, qty: 1, price: product.price, station: product.station }];
     });
     // Refresh from backend (debounced) to get authoritative counts without clobbering optimistic UI
     scheduleRefreshPricingAndStock(700);
@@ -1431,7 +1425,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     if (next.reservationKey) setReservationKey(next.reservationKey);
     toast({ title: 'Draft Loaded', description: `Draft "${next.name || 'Draft'}" is ready in the POS.` });
     setDiscount(draft.discount || { type: 'percentage', value: 0 });
-    setTaxRate(draft.taxRate || 10);
+    setTaxRate(typeof draft.taxRate === 'number' && !Number.isNaN(draft.taxRate) ? draft.taxRate : 0);
     setIsDraftsOpen(false);
     
   };
@@ -2096,6 +2090,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           title="Apply Discount"
           type="discount"
           initialValue={discount}
+          user={user}
         />
         <DiscountTaxModal
           isOpen={isTaxModalOpen}
@@ -2104,6 +2099,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           title="Apply Tax"
           type="tax"
           initialValue={taxRate}
+          user={user}
         />
       </div>
       {/* View Suspended Order Modal */}
@@ -2849,9 +2845,11 @@ const SalesHistoryDialog = ({ isOpen, onClose, sales, onReprint }) => (
   </Dialog>
 );
 
-const DiscountTaxModal = ({ isOpen, onClose, onApply, title, type, initialValue }) => {
+const DiscountTaxModal = ({ isOpen, onClose, onApply, title, type, initialValue, user }) => {
   const [currentType, setCurrentType] = useState(type === 'discount' ? initialValue.type : 'percentage');
   const [value, setValue] = useState(type === 'discount' ? initialValue.value : initialValue);
+  const [savedDiscounts, setSavedDiscounts] = useState([]);
+  const [savedTaxes, setSavedTaxes] = useState([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -2863,6 +2861,38 @@ const DiscountTaxModal = ({ isOpen, onClose, onApply, title, type, initialValue 
       }
     }
   }, [isOpen, initialValue, type]);
+
+  useEffect(() => {
+    if (!isOpen || type !== 'discount') return;
+    (async () => {
+      try {
+        const bid = user?.branchId || user?.branch?.id;
+        const res = await api.discounts?.list?.(bid ? { branchId: bid } : {});
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        setSavedDiscounts(items.filter((d) => d && d.isActive));
+      } catch {
+        setSavedDiscounts([]);
+      }
+    })();
+  }, [isOpen, type, user?.branchId, user?.branch?.id]);
+
+  useEffect(() => {
+    if (!isOpen || type !== 'tax') return;
+    (async () => {
+      try {
+        const settings = await api.settings.get({ branchId: user?.branchId || user?.branch?.id });
+        if (!settings) { setSavedTaxes([]); return; }
+        const presets = [];
+        const n1 = parseFloat(settings.tax1Number);
+        if (!Number.isNaN(n1) && n1 > 0) presets.push({ id: 'tax1', name: settings.tax1Name || 'Tax 1', rate: n1 });
+        const n2 = parseFloat(settings.tax2Number);
+        if (!Number.isNaN(n2) && n2 > 0) presets.push({ id: 'tax2', name: settings.tax2Name || 'Tax 2', rate: n2 });
+        setSavedTaxes(presets);
+      } catch {
+        setSavedTaxes([]);
+      }
+    })();
+  }, [isOpen, type, user?.branchId, user?.branch?.id]);
 
   const handleApply = () => {
     const numValue = parseFloat(value);
@@ -2887,6 +2917,27 @@ const DiscountTaxModal = ({ isOpen, onClose, onApply, title, type, initialValue 
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
+          {type === 'discount' && savedDiscounts.length > 0 && (
+            <div className="space-y-2">
+              <Label>Saved Discounts</Label>
+              <div className="flex flex-wrap gap-2">
+                {savedDiscounts.map((d) => (
+                  <Button
+                    key={d.id}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const kind = String(d.type || 'percentage').toLowerCase() === 'fixed' ? 'fixed' : 'percentage';
+                      setCurrentType(kind);
+                      setValue(String(d.amount ?? 0));
+                    }}
+                  >
+                    {d.name}  {String(d.type || 'percentage').toLowerCase() === 'fixed' ? `${d.amount}` : `${d.amount}%`}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
           {type === 'discount' && (
             <ToggleGroup
               type="single"
@@ -2901,6 +2952,23 @@ const DiscountTaxModal = ({ isOpen, onClose, onApply, title, type, initialValue 
                 Fixed ($)
               </ToggleGroupItem>
             </ToggleGroup>
+          )}
+          {type === 'tax' && savedTaxes.length > 0 && (
+            <div className="space-y-2">
+              <Label>Saved Tax Rates</Label>
+              <div className="flex flex-wrap gap-2">
+                {savedTaxes.map((t) => (
+                  <Button
+                    key={t.id}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setValue(String(t.rate))}
+                  >
+                    {t.name} {t.rate}%
+                  </Button>
+                ))}
+              </div>
+            </div>
           )}
           <div>
             <Label htmlFor="value-input">{type === 'discount' ? 'Discount Value' : 'Tax Rate (%)'}</Label>

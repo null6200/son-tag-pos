@@ -14,6 +14,24 @@ model AppRole {
   @@unique([branchId, name])
 }
 
+model Discount {
+  id        String   @id @default(uuid())
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  branchId  String
+  name      String
+  // 'percentage' or 'fixed' (UI enforces these two values)
+  type      String
+  // For 'percentage', interpret as % value; for 'fixed', interpret as currency amount
+  amount    Decimal  @db.Decimal(12, 2)
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([branchId])
+  @@unique([branchId, name])
+}
+
 // Subcategories (product sub-categories)
 model Subcategory {
   id       String  @id @default(uuid())
@@ -552,6 +570,7 @@ model Branch {
   productTypes     ProductType[]
   serviceTypes     ServiceType[]
   drafts           Draft[]
+  discounts        Discount[]
 
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -736,6 +755,12 @@ model Setting {
   currencySymbol String?
   theme        String?
   taxRate      Decimal? @db.Decimal(5, 2)
+  // POS tax presets
+  tax1Name     String?
+  tax1Number   Decimal? @db.Decimal(5, 2)
+  tax2Name     String?
+  tax2Number   Decimal? @db.Decimal(5, 2)
+  enableInlineTax Boolean @default(false)
   allowOverselling Boolean @default(false)
   // Custom print footer notes
   receiptFooterNote String?
