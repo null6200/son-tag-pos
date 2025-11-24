@@ -497,8 +497,8 @@ const ProductList = ({ products, setProducts, stockLevels, setStockLevels, user,
         ))}
       </div>
       <ProductFormModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onSave={handleSaveProduct} product={editingProduct} user={user} />
-      <ProductViewModal isOpen={isViewModalOpen} onClose={() => setIsViewModalOpen(false)} product={viewingProduct} stockLevels={stockLevels} sectionPrices={sectionPrices} />
       <AddStockModal isOpen={isAddStockModalOpen} onClose={() => setIsAddStockModalOpen(false)} product={stockingProduct} stockLevels={stockLevels} updateStockLevels={setStockLevels} addAdjustment={addAdjustment} user={user} rebuild={rebuildSectionStock} stockCacheKeyFn={stockCacheKey} />
+
     </>
   );
 };
@@ -759,68 +759,6 @@ const ProductFormModal = ({ isOpen, onClose, onSave, product, user }) => {
   );
 };
 
-const ProductViewModal = ({ isOpen, onClose, product, stockLevels, sectionPrices }) => {
-  if (!product) return null;
-
-  const productStock = stockLevels[product.id] || {};
-  const totalStock = Object.values(productStock).reduce((sum, qty) => sum + qty, 0);
-  const prices = sectionPrices[product.id] || {};
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{product.name}</DialogTitle>
-          <DialogDescription>
-            Category: {product.category} | Brand: {product.brand}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="mt-4 grid grid-cols-1 gap-6">
-          <div>
-            <h3 className="font-semibold mb-2">Stock Distribution</h3>
-            <div className="space-y-2 rounded-lg border p-4">
-              {Object.keys(productStock).length > 0 ? (
-                Object.entries(productStock).map(([section, qty]) => (
-                  <div key={section} className="flex justify-between items-center">
-                    <span className="text-sm font-medium flex items-center gap-2"><Warehouse className="w-4 h-4 text-muted-foreground" /> {section}</span>
-                    <span className="font-bold">{qty}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground text-center">No stock available in any section.</p>
-              )}
-            </div>
-            <div className="flex justify-between items-center mt-4 pt-4 border-t font-bold">
-              <span>Total Stock</span>
-              <span>{totalStock}</span>
-            </div>
-          </div>
-          <div>
-            <h3 className="font-semibold mb-2">Section Prices</h3>
-            <div className="space-y-2 rounded-lg border p-4">
-              {Object.keys(prices).length > 0 ? (
-                Object.entries(prices).map(([section, price]) => (
-                  <div key={section} className="flex justify-between items-center">
-                    <span className="text-sm font-medium flex items-center gap-2"><DollarSign className="w-4 h-4 text-muted-foreground" /> {section}</span>
-                    <span className="font-bold">${price.toFixed(2)}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground text-center">No prices set for any section.</p>
-              )}
-            </div>
-          </div>
-        </div>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button type="button" variant="secondary">Close</Button>
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
 const AddStockModal = ({ isOpen, onClose, product, stockLevels, updateStockLevels, addAdjustment, user, rebuild, stockCacheKeyFn }) => {
   const [section, setSection] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -859,23 +797,36 @@ const AddStockModal = ({ isOpen, onClose, product, stockLevels, updateStockLevel
     try {
       // Persist to backend using sectionName + branchId
       const selectedSec = branchSections.find(s => s.id === section);
-      const secNameForCall = selectedSec ? selectedSec.name : section;
-      await api.inventory.adjustInSection({ productId: product.id, sectionName: secNameForCall, branchId: user?.branchId || undefined, delta: qty });
+      const sectionName = selectedSec ? selectedSec.name : section;
+      await api.inventory.adjustInSection({ productId: product.id, sectionName, branchId: user?.branchId || undefined, delta: qty });
 
-      // Rebuild from backend and update cache
-      const invMap = await (async () => {
-        const map = await rebuild?.();
-        if (user?.branchId && map && Object.keys(map).length > 0 && typeof stockCacheKeyFn === 'function') {
-          localStorage.setItem(stockCacheKeyFn(user.branchId), JSON.stringify(map));
+      // Prefer a fresh rebuild from backend
+      let nextMap = undefined;
+      const rebuilt = await rebuild?.();
+      if (rebuilt && Object.keys(rebuilt).length > 0) {
+        nextMap = rebuilt;
+        if (user?.branchId && typeof stockCacheKeyFn === 'function') {
+          try {
+            localStorage.setItem(stockCacheKeyFn(user.branchId), JSON.stringify(rebuilt));
+          } catch {}
         }
-        return map;
-      })();
+      }
 
-      const selected = branchSections.find(s => s.id === section);
-      const sectionName = selected ? selected.name : section;
-      const currentStock = (invMap && invMap[product.id]?.[sectionName]) || 0;
-      const newStock = currentStock; // already rebuilt from backend
+      // If backend did not return this product/section yet, fall back to optimistic update
+      if (!nextMap || !nextMap[product.id] || typeof nextMap[product.id][sectionName] === 'undefined') {
+        nextMap = { ...(stockLevels || {}) };
+        const perSection = { ...(nextMap[product.id] || {}) };
+        perSection[sectionName] = (perSection[sectionName] || 0) + qty;
+        nextMap[product.id] = perSection;
+      }
 
+      // Push final map into parent state so Total Stock updates immediately
+      updateStockLevels(nextMap || {});
+
+      const currentPerProduct = (nextMap && nextMap[product.id]) || {};
+      const newStock = currentPerProduct[sectionName] ?? 0;
+
+      const previousStock = newStock - qty;
       const newAdjustment = {
         id: `SA-${Date.now()}`,
         productId: product.id,
@@ -885,7 +836,7 @@ const AddStockModal = ({ isOpen, onClose, product, stockLevels, updateStockLevel
         quantity: qty,
         reason: 'Stock Purchase/Receiving',
         date: `${date}T${time}:00`,
-        previousStock: currentStock,
+        previousStock,
         newStock,
       };
       addAdjustment(newAdjustment);

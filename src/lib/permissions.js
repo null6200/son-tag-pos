@@ -43,6 +43,10 @@ export function hasPermission(perms, key) {
         ['view_pos_sell','add_pos_sell','edit_pos_sell','delete_pos_sell'].forEach(p=>base.add(norm(p)));
       }
     });
+    // Normalize legacy payment permissions to core add_payment used by POS
+    if (has('add_edit_payment') || has('add_sale_payment') || has('edit_sale_payment')) {
+      base.add(norm('add_payment'));
+    }
     return base;
   })();
   const normSet = new Set(expanded);

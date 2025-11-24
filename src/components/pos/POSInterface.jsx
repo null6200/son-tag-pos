@@ -669,15 +669,36 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   useEffect(() => {
     const loadSections = async () => {
       try {
-        const sections = await api.sections.list({ branchId: user?.branchId || undefined });
-        setBranchSections(sections || []);
+        if (!user?.branchId) { setBranchSections([]); setCurrentSection(''); return; }
+        const sections = await api.sections.list({ branchId: user.branchId });
+        let filtered = Array.isArray(sections) ? sections : [];
+        // Apply per-user section access preferences if configured
+        try {
+          const prefs = await api.users.getPreferences();
+          const accessAll = !!prefs?.accessAllSections;
+          const ids = Array.isArray(prefs?.accessSectionIds) ? prefs.accessSectionIds.map((x) => String(x)) : [];
+          if (!accessAll && ids.length) {
+            const allowed = new Set(ids);
+            filtered = filtered.filter(s => allowed.has(String(s.id)));
+          }
+        } catch {
+          // if prefs call fails, fall back to all branch sections
+        }
+        setBranchSections(filtered);
         const current = String(currentSection || '').trim();
         if (!current) {
-          if (shiftRegister && shiftRegister.sectionId) {
+          const source = filtered.length ? filtered : (Array.isArray(sections) ? sections : []);
+          if (shiftRegister && shiftRegister.sectionId && source.some(s => String(s.id) === String(shiftRegister.sectionId))) {
             setCurrentSection(shiftRegister.sectionId);
           } else {
-            const firstValidSection = (sections || []).find(s => !String(s.name || '').toLowerCase().includes('store') && !String(s.name || '').toLowerCase().includes('kitchen'));
-            setCurrentSection(firstValidSection ? firstValidSection.id : ((sections && sections[0]) ? sections[0].id : ''));
+            const firstValidSection = (source || []).find(s => !String(s.name || '').toLowerCase().includes('store') && !String(s.name || '').toLowerCase().includes('kitchen'));
+            setCurrentSection(firstValidSection ? firstValidSection.id : ((source && source[0]) ? source[0].id : ''));
+          }
+        } else {
+          // If currentSection is no longer allowed, reset to a valid one
+          if (!filtered.some(s => String(s.id) === current)) {
+            const fallback = filtered[0] || null;
+            setCurrentSection(fallback ? fallback.id : '');
           }
         }
       } catch {
@@ -934,8 +955,19 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           const sectionId = currentSection;
           const items = Array.isArray(cart) ? [...cart] : [];
           for (const it of items) {
-            try { await api.inventory.adjustInSection({ productId: it.id, sectionId, delta: +Number(it.qty || 0), reason: `RESV|${reservationKey}|RELEASE` }); } catch {}
+            try {
+              await api.inventory.adjustInSection({
+                productId: it.id,
+                sectionId,
+                delta: +Number(it.qty || 0),
+                reason: `RESV|${reservationKey}|RELEASE`,
+              });
+              // Optimistically restore local stock so badges update immediately
+              adjustLocalSectionStock(it.id, +Number(it.qty || 0));
+            } catch {}
           }
+          // Also trigger a debounced backend refresh so UI stays in sync
+          try { scheduleRefreshPricingAndStock(500); } catch {}
         })();
       } catch {}
       if (editingDraft && editingDraft.table) {
@@ -1087,9 +1119,9 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     const currentSectionName = branchSections.find(s => s.id === currentSection)?.name || '';
     const stock = Number(stockLevels[product.id]?.[currentSectionName] ?? 0);
     const existingCartItem = cart.find(item => item.id === product.id);
-    const currentCartQty = existingCartItem ? existingCartItem.qty : 0;
 
-    if (stock <= currentCartQty && !allowOverselling) {
+    // Treat backend stock snapshot as authoritative; if no units remain, block.
+    if (stock <= 0 && !allowOverselling) {
         toast({ title: 'Out of Stock', description: `${product.name} is currently out of stock.`, variant: 'destructive' });
         return;
     }
@@ -1101,7 +1133,6 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       toast({ title: 'Stock not reserved', description: String(e?.message || 'Failed to reserve stock.'), variant: 'destructive' });
       return;
     }
-    try { adjustLocalSectionStock(product.id, -1); } catch {}
     setCart(prev => {
       if (existingCartItem) return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
       return [...prev, { ...product, qty: 1, price: product.price, station: product.station }];
@@ -1205,10 +1236,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     const product = products.find(p => p.id === id);
     const currentSectionName = branchSections.find(s => s.id === currentSection)?.name || '';
     const stock = Number(stockLevels[id]?.[currentSectionName] ?? 0);
-    const existingCartItem = cart.find(item => item.id === id);
-    const currentCartQty = existingCartItem ? existingCartItem.qty : 0;
 
-    if (delta > 0 && stock <= currentCartQty && !allowOverselling) {
+    if (delta > 0 && stock <= 0 && !allowOverselling) {
         toast({ title: 'Stock Limit Reached', description: `No more ${product.name} in stock.`, variant: 'destructive' });
         return;
     }
@@ -1237,8 +1266,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       const currentSectionName = branchSections.find(s => s.id === currentSection)?.name || '';
       const stock = Number(stockLevels[id]?.[currentSectionName] ?? 0);
       const delta = targetQty - currentQty;
-      if (delta > 0 && (stock < targetQty) && !allowOverselling) {
-        toast({ title: 'Stock Limit Reached', description: `${product?.name || 'Item'} only has ${stock} in stock.`, variant: 'destructive' });
+      if (delta > 0 && stock <= 0 && !allowOverselling) {
+        toast({ title: 'Stock Limit Reached', description: `${product?.name || 'Item'} is out of stock.`, variant: 'destructive' });
         return;
       }
       // Backend-first adjust to maintain reservation integrity
@@ -1293,19 +1322,30 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       toast({ title: 'Empty Cart', description: 'Cannot save an empty cart as a draft.', variant: 'destructive' });
       return;
     }
+
     if (!selectedStaff) {
       toast({ title: 'Service staff required', description: 'Please select service staff before saving a draft.', variant: 'destructive' });
       return;
     }
     let updatedDrafts;
     const isDineInNow = /dine/i.test(String(currentService || '').trim());
-    const draftTable = isDineInNow ? selectedTable : null;
+    // For Dine-in, require a table either from current selection or the editing draft.
+    const baseDraftTable = selectedTable || editingDraft?.table || null;
+    if (isDineInNow && !baseDraftTable) {
+      toast({ title: 'Table Required', description: 'Please select a table for Dine-in drafts.', variant: 'destructive' });
+      return;
+    }
+    // Prefer the currently selected table, but when editing an existing dine-in draft
+    // fall back to that draft's table so we don't lose the binding when resaving.
+    const resolvedDraftTable = isDineInNow ? baseDraftTable : null;
+
     const staffMember = serviceStaffList.find(s => s.id === selectedStaff);
     const draftData = {
         cart,
         service: currentService,
         customer: currentCustomer,
-        table: draftTable,
+        table: resolvedDraftTable,
+
         sectionId: currentSection,
         waiter: staffMember ? staffMember.username : (user?.username || ''),
         waiterId: selectedStaff,
@@ -1332,7 +1372,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         const payload = {
           branchId: (user?.branchId || user?.branch?.id || (branchSections.find(s => s.id === currentSection)?.branchId) || undefined),
           sectionId: currentSection,
-          tableId: draftTable?.id,
+          tableId: resolvedDraftTable?.id || editingDraft?.table?.id || editingDraft?.tableId,
+
           name: nameToUse,
           serviceType: currentService,
           waiterId: selectedStaff || undefined,
@@ -1356,17 +1397,17 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       } catch {}
     })();
     
-    if (draftTable) {
-      const t = tables.find(t => t.id === draftTable.id);
+    if (resolvedDraftTable) {
+      const t = tables.find(t => t.id === resolvedDraftTable.id);
       if (!t || t.status !== 'occupied') {
-        const ok = await updateTableStatus(draftTable.id, 'occupied');
+        const ok = await updateTableStatus(resolvedDraftTable.id, 'occupied');
         if (!ok) {
-          toast({ title: `Could not lock ${draftTable.name}`, description: 'Table might be in use. Please choose another table.', variant: 'destructive' });
+          toast({ title: `Could not lock ${resolvedDraftTable.name}`, description: 'Table might be in use. Please choose another table.', variant: 'destructive' });
         }
         // Reflect in local UI immediately
         if (ok) {
-          setSelectedTable(prev => prev && prev.id === draftTable.id ? { ...prev, status: 'occupied' } : prev);
-          setTables(prev => prev.map(tt => tt.id === draftTable.id ? { ...tt, status: 'occupied' } : tt));
+          setSelectedTable(prev => prev && prev.id === resolvedDraftTable.id ? { ...prev, status: 'occupied' } : prev);
+          setTables(prev => prev.map(tt => tt.id === resolvedDraftTable.id ? { ...tt, status: 'occupied' } : tt));
         }
       }
     }
@@ -1536,7 +1577,17 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
       // Credit sale -> create SUSPENDED order, link draft to orderId, then return
       if (paymentDetails?.method === 'credit sale') {
-        const draftTable = currentService === 'Dine-in' ? selectedTable : null;
+        const isDineInNow = /dine/i.test(String(currentService || '').trim());
+        // For Dine-in credit sale, require a table either from current selection or the editing draft.
+        const baseDraftTable = selectedTable || editingDraft?.table || null;
+        if (isDineInNow && !baseDraftTable) {
+          toast({ title: 'Table Required', description: 'Please select a table for Dine-in credit sales.', variant: 'destructive' });
+          return;
+        }
+        const draftTable = isDineInNow
+          ? baseDraftTable
+          : null;
+
         const customerName = paymentDetails?.customer?.name || 'Walk-in';
         const customerPhone = paymentDetails?.customer?.phone || null;
         const draftData = { cart, service: currentService, customer: customerName, customerDetails: paymentDetails?.customer || { name: customerName, phone: customerPhone }, table: draftTable, sectionId: currentSection, total, waiter: waiterName, waiterId: selectedStaff, discount, taxRate };
@@ -1549,7 +1600,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             items: cart.map(ci => ({ productId: ci.id, qty: String(ci.qty), price: String(ci.price ?? 0) })),
             reservationKey,
             allowOverselling,
-            tableId: draftTable?.id,
+            tableId: draftTable?.id || editingDraft?.table?.id || editingDraft?.tableId,
             status: 'SUSPENDED',
           });
         } catch (e) {
@@ -1571,7 +1622,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           const sec = (branchSections || []).find(s => s.id === currentSection);
           const resolvedBranchId = user?.branchId || user?.branch?.id || sec?.branchId || undefined;
           const draftName = editingDraft ? editingDraft.name : `Suspended: ${customerName}`;
-          const payload = { branchId: resolvedBranchId, sectionId: currentSection, tableId: draftTable?.id, orderId: createdSuspendedOrder?.id, name: draftName, serviceType: currentService, waiterId: selectedStaff || undefined, customerName, customerPhone, cart, subtotal: Number(subtotal), discount: Number(discountValue), tax: Number(tax), total: Number(total), status: 'SUSPENDED', reservationKey };
+          const payload = { branchId: resolvedBranchId, sectionId: currentSection, tableId: draftTable?.id || editingDraft?.table?.id || editingDraft?.tableId, orderId: createdSuspendedOrder?.id, name: draftName, serviceType: currentService, waiterId: selectedStaff || undefined, customerName, customerPhone, cart, subtotal: Number(subtotal), discount: Number(discountValue), tax: Number(tax), total: Number(total), status: 'SUSPENDED', reservationKey };
           if (editingDraft?.backendId) { await api.drafts.update(String(editingDraft.backendId), payload); } else { await api.drafts.create(payload); }
           await fetchDrafts(draftsPage);
         } catch {}
@@ -1982,7 +2033,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             draftCount={drafts.filter(d => !(d.isSuspended || String(d.status || '').toUpperCase() === 'SUSPENDED')).length}
             editingDraft={editingDraft}
             onPrintBill={handlePrintBill}
-            canAcceptPayment={hasAny(userPermissions, ['add_pos_sell', 'add_payment'])}
+            canAcceptPayment={hasAny(userPermissions, ['add_payment'])}
             serviceStaffList={serviceStaffList}
             selectedStaff={selectedStaff}
             setSelectedStaff={requestSelectStaff}

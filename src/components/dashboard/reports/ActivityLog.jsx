@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { FileDown } from 'lucide-react';
@@ -10,36 +10,73 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { api } from '@/lib/api';
 
 const ActivityLog = ({ user }) => {
-  const data = [
-    { date: '2025-10-03 10:05 AM', user: 'Jane Smith', action: 'Created Order #125' },
-    { date: '2025-10-03 10:02 AM', user: 'John Doe', action: 'Opened Shift Register' },
-    { date: '2025-10-02 08:00 PM', user: 'Admin', action: 'Added new product: "Beef Burger"' },
-  ];
+  const [rows, setRows] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setIsLoading(true);
+        const res = await api.reports.list({
+          type: 'activity_log',
+          branchId: user?.branchId || undefined,
+          limit: 200,
+          offset: 0,
+        });
+        const items = Array.isArray(res?.items) ? res.items : [];
+        setRows(items);
+      } catch (_) {
+        setRows([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    load();
+  }, [user?.branchId]);
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle>System Activity Log</CardTitle>
+          <CardTitle>Activity Log</CardTitle>
           <Button variant="outline"><FileDown className="mr-2 h-4 w-4" /> Export</Button>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date & Time</TableHead>
+                <TableHead>Date</TableHead>
                 <TableHead>User</TableHead>
+                <TableHead>Subject Type</TableHead>
                 <TableHead>Action</TableHead>
+                <TableHead>Note</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.map((row, index) => (
-                <TableRow key={index}>
-                  <TableCell>{row.date}</TableCell>
-                  <TableCell>{row.user}</TableCell>
-                  <TableCell>{row.action}</TableCell>
+              {isLoading && rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                    Loading activity...
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isLoading && rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                    No activity recorded.
+                  </TableCell>
+                </TableRow>
+              )}
+              {rows.map((log) => (
+                <TableRow key={log.id}>
+                  <TableCell>{log.date ? new Date(log.date).toLocaleString() : ''}</TableCell>
+                  <TableCell>{log.userName || 'Unknown'}</TableCell>
+                  <TableCell>{log.subjectType || '-'}</TableCell>
+                  <TableCell>{log.action}</TableCell>
+                  <TableCell className="whitespace-pre-wrap max-w-xl">{log.note || ''}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

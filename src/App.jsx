@@ -113,6 +113,22 @@ export default function App() {
     setAuthProvider(() => authToken || null);
   }, [authToken]);
 
+  // Lightweight activity heartbeat: as long as a user is logged in and the app is
+  // open, periodically ping the backend to bump session lastUsedAt so active
+  // sessions are not logged out by idle timeout.
+  useEffect(() => {
+    if (!currentUser?.id) return undefined;
+    let timer = null;
+    const intervalMs = 5 * 60 * 1000; // 5 minutes
+    const tick = async () => {
+      try { await api.auth?.ping?.(); } catch {}
+    };
+    // Fire one ping soon after login, then at intervals
+    timer = setInterval(tick, intervalMs);
+    setTimeout(tick, 10 * 1000);
+    return () => { if (timer) clearInterval(timer); };
+  }, [currentUser?.id]);
+
   const handleSetTheme = async (newTheme) => {
     setTheme(newTheme);
     document.documentElement.classList.toggle('dark', newTheme === 'dark');
@@ -129,11 +145,23 @@ export default function App() {
     clearLoungeStorage();
     try { if (token) { localStorage.setItem('access_token', token); sessionStorage.setItem('access_token', token); } } catch {}
     setAuthToken(token);
+    // Use login response immediately for UX, but also refetch via api.me() to get full
+    // branch + permissions shape (same as on hard refresh) so other components don't
+    // depend on a manual reload.
     setCurrentUser(user);
     try { localStorage.setItem('loungeUser', JSON.stringify(user || null)); } catch {}
+    let effectiveUser = user;
+    try {
+      const fresh = await api.me();
+      if (fresh && fresh.id) {
+        effectiveUser = fresh;
+        setCurrentUser(fresh);
+        try { localStorage.setItem('loungeUser', JSON.stringify(fresh || null)); } catch {}
+      }
+    } catch {}
     // Load branch-scoped business settings right after login
     try {
-      let branchId = user?.branchId || user?.branch?.id;
+      let branchId = effectiveUser?.branchId || effectiveUser?.branch?.id || user?.branchId || user?.branch?.id;
       if (!branchId) {
         try {
           const branches = await api.branches.list();

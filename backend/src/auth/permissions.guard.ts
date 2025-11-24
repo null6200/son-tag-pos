@@ -53,11 +53,27 @@ export class PermissionsGuard implements CanActivate {
     if (has('settings') || has('edit_settings') || has('settings_manage')) {
       base.add('edit_settings');
     }
+    // POS / sales bundle: grant all core POS actions plus related views (sections, shift register)
     if (has('pos_sell') || has('sell') || has('sales')) {
       base.add('view_pos_sell');
       base.add('add_pos_sell');
       base.add('edit_pos_sell');
       base.add('delete_pos_sell');
+    }
+    // If user has any POS sell permissions directly, also give them section + shift visibility helpers,
+    // basic staff/table management, and read-only product access needed inside POS.
+    if (has('view_pos_sell') || has('add_pos_sell') || has('edit_pos_sell') || has('delete_pos_sell') || has('open_shift_register')) {
+      base.add('view_branch_section');
+      base.add('open_shift_register');
+      base.add('view_register_report');
+      base.add('view_product');    // needed for /products list used by POS menu
+      base.add('view_user');       // needed for api.users.list used by service staff dropdown
+      base.add('edit_tables');     // needed for /tables/:id/lock and /tables/:id/unlock
+    }
+
+    // Legacy / sales-specific payment permissions: normalize to core add_payment used by POS
+    if (has('add_edit_payment') || has('add_sale_payment') || has('edit_sale_payment')) {
+      base.add('add_payment');
     }
 
     // Wildcard simple expansion
@@ -86,6 +102,9 @@ export class PermissionsGuard implements CanActivate {
         base.add('add_pos_sell');
         base.add('edit_pos_sell');
         base.add('delete_pos_sell');
+        base.add('view_branch_section');
+        base.add('open_shift_register');
+        base.add('view_register_report');
       }
     }
 

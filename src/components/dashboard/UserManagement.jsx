@@ -35,6 +35,7 @@ const UserManagement = ({ user }) => {
   const [showArchived, setShowArchived] = useState(false);
   const [existingPins, setExistingPins] = useState([]);
   const [currentBranchId, setCurrentBranchId] = useState('');
+  const [confirmUser, setConfirmUser] = useState(null);
 
   // Load branches and derive current branch id
   useEffect(() => {
@@ -182,7 +183,7 @@ const UserManagement = ({ user }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {users.filter(u => showArchived ? true : !u.archived).map((user, index) => {
+        {users.filter(u => showArchived ? !!u.archived : !u.archived).map((user, index) => {
             return (
           <motion.div
             key={user.id}
@@ -228,13 +229,45 @@ const UserManagement = ({ user }) => {
                 </div>
                 <div className="flex gap-2 pt-4 mt-2">
                   <Button onClick={() => handleEditUser(user)} variant="outline" size="sm" className="flex-1"><Edit className="w-3 h-3 mr-1.5" />Edit</Button>
-                  <Button onClick={() => handleDeleteUser(user.id)} variant="destructive" size="sm" className="flex-1"><Trash2 className="w-3 h-3 mr-1.5" />Delete</Button>
+                  <Button onClick={() => setConfirmUser(user)} variant="destructive" size="sm" className="flex-1"><Trash2 className="w-3 h-3 mr-1.5" />Delete</Button>
                 </div>
               </CardContent>
             </Card>
           </motion.div>
         )})}
       </div>
+      <Dialog open={!!confirmUser} onOpenChange={(open) => { if (!open) setConfirmUser(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm Delete</DialogTitle>
+            <DialogDescription>
+              This action will archive the selected user so they can no longer log in or appear as active staff. You can still view them under <strong>Show Archived</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2 text-sm">
+            {confirmUser && (
+              <p>
+                Delete user <span className="font-semibold">{confirmUser.firstName || ''} {confirmUser.surname || ''} ({confirmUser.username})</span>?
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmUser(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                const target = confirmUser;
+                setConfirmUser(null);
+                if (target?.id) {
+                  await handleDeleteUser(target.id);
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <UserFormModal
     isOpen={isModalOpen}
     onClose={() => setIsModalOpen(false)}

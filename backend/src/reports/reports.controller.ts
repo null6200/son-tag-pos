@@ -29,6 +29,8 @@ export class ReportsController {
         return this.reports.listStaff({ branchId, from, to, limit: lim, offset: off });
       case 'cash_movements':
         return this.reports.listCashMovements({ branchId, from, to, limit: lim, offset: off });
+      case 'activity_log':
+        return this.reports.listActivityLog({ branchId, from, to, limit: lim, offset: off });
       case 'table':
       case 'discounts':
       default:

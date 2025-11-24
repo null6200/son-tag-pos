@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { add } from 'date-fns';
+import { AuditService } from '../audit/audit.service';
 
 interface RegisterDto {
   username: string;
@@ -19,7 +20,7 @@ interface LoginDto {
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService, private jwt: JwtService) {}
+  constructor(private prisma: PrismaService, private jwt: JwtService, private audit: AuditService) {}
 
   private static failures = new Map<string, { count: number; until?: number }>();
   private maxFailures() { return Number(process.env.LOGIN_MAX_FAILURES || 5); }
@@ -118,6 +119,21 @@ export class AuthService {
     if (!ok) { this.markFailure(dto.username, ip); throw new UnauthorizedException('Invalid credentials'); }
     this.clearFailures(dto.username, ip);
     const { accessToken, refreshToken } = await this.issueTokens(user.id, user.username, user.role, undefined, undefined);
+
+    // Record successful login in audit log
+    try {
+      await this.audit.log({
+        action: 'Login',
+        userId: user.id,
+        meta: {
+          subjectType: 'User',
+          note: 'User logged in',
+        },
+      });
+    } catch {
+      // audit failures should never block login
+    }
+
     return { token: accessToken, refreshToken, user } as any;
   }
 
@@ -170,6 +186,31 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('User not found');
     const next = await this.issueTokens(user.id, user.username, user.role as any, userAgent, ipAddress);
     return next;
+  }
+
+  // Lightweight helper invoked on general API activity to keep the session "alive"
+  // by bumping lastUsedAt on the matching refresh token, without rotating tokens.
+  async touchRefreshToken(currentToken: string) {
+    let decoded: any;
+    try {
+      decoded = await this.jwt.verifyAsync(currentToken, { secret: this.refreshSecret() });
+    } catch {
+      return; // ignore invalid tokens; caller will rely on normal auth guards
+    }
+    const userId = String(decoded.sub || '');
+    if (!userId) return;
+    const now = new Date();
+    const tokens = await this.prisma.refreshToken.findMany({ where: { userId, revoked: false } });
+    for (const t of tokens) {
+      const ok = await bcrypt.compare(currentToken, t.tokenHash);
+      if (!ok) continue;
+      if (t.expiresAt <= now) {
+        // Do not revive expired tokens; leave normal refresh flow to handle
+        return;
+      }
+      await this.prisma.refreshToken.update({ where: { id: t.id }, data: { lastUsedAt: now } });
+      return;
+    }
   }
 
   async revokeRefreshToken(currentToken: string) {

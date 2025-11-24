@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 interface DraftPayload {
@@ -29,9 +29,15 @@ export class DraftsService {
   async list(branchId: string, sectionId?: string, page?: number, pageSize?: number): Promise<any>;
   async list(branchId: string, sectionId: string | undefined, page: number, pageSize: number, userId?: string, perms?: string[]): Promise<any>;
   async list(branchId: string, sectionId?: string, page: number = 1, pageSize: number = 20, userId?: string, perms: string[] = []) {
-    const hasAll = (perms || []).includes('all')
-      || (perms || []).includes('view_drafts_all')
-      || (perms || []).some(p => typeof p === 'string' && /all/i.test(p) && /(draft|sale|order)s?/i.test(p));
+    const norm = (p: any) => (typeof p === 'string' ? p.toLowerCase() : '');
+    const set = new Set((perms || []).map(norm));
+    const hasDraftAllFlag = Array.from(set).some((p) => {
+      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts' || p === 'draft_view_all') return true;
+      // Any explicit view/edit permission that clearly refers to "all drafts"
+      if ((p.startsWith('view_') || p.startsWith('edit_') || p.startsWith('draft_')) && p.includes('draft') && p.includes('all')) return true;
+      return false;
+    });
+    const hasAll = set.has('all') || hasDraftAllFlag;
     // Build where condition; branchId is optional if user has ALL or we scope by userId
     const where: any = {
       ...(branchId ? { branchId } : {}),
@@ -70,9 +76,26 @@ export class DraftsService {
     return { items, total, page, pageSize };
   }
 
-  async get(id: string) {
+  async get(id: string, userId?: string, perms: string[] = []) {
     const draft = await this.prisma.draft.findUnique({ where: { id } });
     if (!draft) throw new NotFoundException('Draft not found');
+    const norm = (p: any) => (typeof p === 'string' ? p.toLowerCase() : '');
+    const set = new Set((perms || []).map(norm));
+    const hasDraftAllFlag = Array.from(set).some((p) => {
+      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts' || p === 'draft_view_all') return true;
+      if ((p.startsWith('view_') || p.startsWith('edit_') || p.startsWith('draft_')) && p.includes('draft') && p.includes('all')) return true;
+      return false;
+    });
+    const hasAll = set.has('all') || hasDraftAllFlag;
+    if (!hasAll) {
+      if (!userId) {
+        throw new BadRequestException('User context required');
+      }
+      if (!draft.waiterId || String(draft.waiterId) !== String(userId)) {
+        // Hide existence if user is not owner
+        throw new NotFoundException('Draft not found');
+      }
+    }
     return draft;
   }
 
@@ -100,9 +123,23 @@ export class DraftsService {
     });
   }
 
-  async update(id: string, dto: Partial<DraftPayload>) {
+  async update(id: string, dto: Partial<DraftPayload>, userId?: string, perms: string[] = []) {
     const existing = await this.prisma.draft.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Draft not found');
+    const norm = (p: any) => (typeof p === 'string' ? p.toLowerCase() : '');
+    const set = new Set((perms || []).map(norm));
+    const hasDraftAllFlag = Array.from(set).some((p) => {
+      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts') return true;
+      if ((p.startsWith('view_') || p.startsWith('edit_')) && p.includes('draft') && p.includes('all')) return true;
+      return false;
+    });
+    const hasAll = set.has('all') || hasDraftAllFlag;
+    if (!hasAll) {
+      if (!userId) throw new BadRequestException('User context required');
+      if (!existing.waiterId || String(existing.waiterId) !== String(userId)) {
+        throw new ForbiddenException('Cannot edit drafts belonging to other users');
+      }
+    }
     return this.prisma.draft.update({
       where: { id },
       data: {
@@ -125,9 +162,23 @@ export class DraftsService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, userId?: string, perms: string[] = []) {
     const existing = await this.prisma.draft.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Draft not found');
+    const norm = (p: any) => (typeof p === 'string' ? p.toLowerCase() : '');
+    const set = new Set((perms || []).map(norm));
+    const hasDraftAllFlag = Array.from(set).some((p) => {
+      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts') return true;
+      if ((p.startsWith('view_') || p.startsWith('edit_')) && p.includes('draft') && p.includes('all')) return true;
+      return false;
+    });
+    const hasAll = set.has('all') || hasDraftAllFlag;
+    if (!hasAll) {
+      if (!userId) throw new BadRequestException('User context required');
+      if (!existing.waiterId || String(existing.waiterId) !== String(userId)) {
+        throw new ForbiddenException('Cannot delete drafts belonging to other users');
+      }
+    }
     return this.prisma.draft.delete({ where: { id } });
   }
 }

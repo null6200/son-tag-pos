@@ -1,7 +1,10 @@
-import { Body, Controller, Post, Res, Req } from '@nestjs/common';
+import { Body, Controller, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { IsEmail, IsOptional, IsString, MinLength, Matches } from 'class-validator';
 import type { Response, Request } from 'express';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import { JwtService } from '@nestjs/jwt';
+import { AuditService } from '../audit/audit.service';
 
 class RegisterDto {
   @IsOptional()
@@ -46,7 +49,11 @@ class LoginDto {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly jwt: JwtService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Post('register')
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response, @Req() req: Request) {
@@ -76,6 +83,28 @@ export class AuthController {
     // best-effort revoke current refresh if present
     const rt = getCookie(req, 'refresh_token');
     if (rt) { try { await this.auth.revokeRefreshToken(rt); } catch {} }
+
+    // Attempt to resolve user from access token for logging
+    const at = getCookie(req, 'access_token');
+    if (at) {
+      try {
+        const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'devsecret';
+        const decoded: any = await this.jwt.verifyAsync(at, { secret });
+        const userId = decoded?.sub ? String(decoded.sub) : undefined;
+        if (userId) {
+          await this.audit.log({
+            action: 'Logout',
+            userId,
+            meta: {
+              subjectType: 'User',
+              note: 'User logged out',
+            },
+          });
+        }
+      } catch {
+        // ignore failures; logout should still succeed
+      }
+    }
     clearAuthCookies(res);
     return { ok: true };
   }
@@ -88,6 +117,19 @@ export class AuthController {
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined;
     const next = await this.auth.rotateRefreshToken(current, ua, ip);
     setAuthCookies(res, next.accessToken, next.refreshToken);
+    return { ok: true } as any;
+  }
+
+  // Lightweight activity ping: used by frontend to keep idle timeout from expiring
+  // while the user is actively using the app. Does not rotate tokens; only bumps
+  // lastUsedAt on the matching refresh token if present.
+  @UseGuards(JwtAuthGuard)
+  @Post('ping')
+  async ping(@Req() req: Request) {
+    const current = getCookie(req, 'refresh_token');
+    if (current) {
+      try { await this.auth.touchRefreshToken(current); } catch {} // best-effort only
+    }
     return { ok: true } as any;
   }
 }

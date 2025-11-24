@@ -500,6 +500,71 @@ export class ReportsService {
     return { items, total };
   }
 
+  async listActivityLog(params: { branchId?: string; from?: string; to?: string; limit: number; offset: number }) {
+    const { branchId, from, to, limit, offset } = params;
+
+    const dateFilter = {
+      gte: from ? new Date(from) : undefined,
+      lte: to ? new Date(to) : undefined,
+    } as { gte?: Date; lte?: Date };
+
+    const anyPrisma = this.prisma as any;
+    if (!anyPrisma.auditLog?.findMany) {
+      return { items: [], total: 0 };
+    }
+
+    const where: any = {};
+    if (branchId) where.branchId = branchId;
+    if (from || to) where.createdAt = dateFilter;
+
+    const [rows, total] = await Promise.all([
+      anyPrisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+        select: { id: true, action: true, userId: true, branchId: true, meta: true, createdAt: true },
+      }),
+      anyPrisma.auditLog.count({ where }),
+    ]);
+
+    const userIds = Array.from(new Set(rows.map((r: any) => r.userId).filter((x: any) => !!x))) as string[];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, username: true, firstName: true, surname: true },
+        })
+      : [];
+
+    const items = rows.map((r: any) => {
+      const u = users.find((x) => x.id === r.userId);
+      const userName = u
+        ? (((u.firstName || '') + (u.surname ? ` ${u.surname}` : '')).trim() || u.username)
+        : 'Unknown';
+      const meta: any = r.meta || {};
+      const subjectType = meta.subjectType || meta.entityType || meta.type || null;
+      const note =
+        meta.note ||
+        meta.details ||
+        meta.description ||
+        meta.invoiceNo ||
+        meta.reference ||
+        null;
+
+      return {
+        id: r.id,
+        date: r.createdAt,
+        userName,
+        action: r.action,
+        subjectType,
+        note,
+        branchId: r.branchId || null,
+      };
+    });
+
+    return { items, total };
+  }
+
   async listCashMovements(params: { branchId?: string; from?: string; to?: string; limit: number; offset: number }) {
     const dateFilter = {
       gte: params.from ? new Date(params.from) : undefined,
@@ -705,6 +770,18 @@ export class ReportsService {
         });
     if (!shift) return { ok: false, message: 'Shift not found' } as any;
 
+    // Enrich shift with branch/section names and openedBy details for UI footer
+    const [branch, section, openedBy] = await Promise.all([
+      shift.branchId ? this.prisma.branch.findUnique({ where: { id: shift.branchId }, select: { id: true, name: true, location: true } }) : Promise.resolve(null),
+      shift.sectionId ? this.prisma.section.findUnique({ where: { id: shift.sectionId }, select: { id: true, name: true } }) : Promise.resolve(null),
+      this.prisma.user.findUnique({ where: { id: shift.openedById }, select: { id: true, username: true, firstName: true, surname: true, email: true } }),
+    ]);
+    const openedByName = openedBy ? (((openedBy.firstName || '') + (openedBy.surname ? ` ${openedBy.surname}` : '')).trim() || openedBy.username) : undefined;
+    const openedByEmail = openedBy?.email || undefined;
+    const branchName = branch?.name || undefined;
+    const branchLocation = branch?.location || undefined;
+    const sectionName = section?.name || undefined;
+
     const from = shift.openedAt;
     const to = shift.closedAt || new Date();
     const dateFilter = { gte: from, lte: to } as { gte?: Date; lte?: Date };
@@ -733,6 +810,50 @@ export class ReportsService {
       salesByCashier.set(uid, (salesByCashier.get(uid) || 0) + amt);
     }
 
+    // Discounts for orders in this window (using draft fallback similar to overview)
+    const ordersInWindow = await this.prisma.order.findMany({
+      where: {
+        createdAt: dateFilter,
+        status: { not: 'CANCELLED' as any },
+        ...(shift.branchId ? { branchId: shift.branchId } : {}),
+        ...(shift.sectionId ? { sectionId: shift.sectionId } : {}),
+      },
+      select: {
+        subtotal: true,
+        tax: true,
+        discount: true,
+        total: true,
+        drafts: {
+          select: { total: true, subtotal: true, tax: true, discount: true, createdAt: true },
+          orderBy: { createdAt: 'desc' as const },
+          take: 1,
+        },
+      },
+    } as any);
+
+    let totalDiscounts = 0;
+    if (Array.isArray(ordersInWindow) && ordersInWindow.length) {
+      for (const o of ordersInWindow as any[]) {
+        const ordDisc = parseFloat(String((o as any).discount ?? 0));
+        const latestDraft = Array.isArray((o as any).drafts) && (o as any).drafts.length ? (o as any).drafts[0] : undefined;
+        const dDisc = latestDraft ? parseFloat(String((latestDraft as any).discount ?? 0)) : 0;
+        const effDisc = latestDraft != null ? dDisc : ordDisc;
+        if (!isNaN(effDisc) && effDisc > 0) {
+          totalDiscounts += effDisc;
+        }
+      }
+    }
+
+    // Expenses in this window for the branch
+    const expenseAgg = await this.prisma.expense.aggregate({
+      where: {
+        ...(shift.branchId ? { branchId: shift.branchId } : {}),
+        createdAt: dateFilter,
+      },
+      _sum: { amount: true },
+    });
+    const totalExpenses = parseFloat(String(expenseAgg._sum.amount ?? 0));
+
     // Credit sales during window (orders suspended)
     const creditOrders = await this.prisma.order.findMany({
       where: {
@@ -755,57 +876,72 @@ export class ReportsService {
           ...(shift.sectionId ? { sectionId: shift.sectionId } : {}),
         },
       },
-      select: { qty: true, product: { select: { category: true, name: true } } },
+      select: { qty: true, price: true, product: { select: { name: true, category: true, subCategory: true } } },
     });
     let totalItemsSold = 0;
-    const byCategory = new Map<string, number>();
-    const byBrand = new Map<string, number>();
+    const byCategory = new Map<string, { qty: number; total: number }>();
+    const byBrand = new Map<string, { qty: number; total: number }>();
+    const productsMap = new Map<string, { name: string; qty: number; totalAmount: number }>();
     for (const it of orderItems) {
       const q = Number(it.qty || 0);
+      const price = parseFloat(String((it as any).price ?? 0));
+      const lineTotal = q * (isNaN(price) ? 0 : price);
       totalItemsSold += q;
-      const cat = (it.product?.category || 'Unknown');
-      const brand = 'N/A';
-      byCategory.set(cat, (byCategory.get(cat) || 0) + q);
-      byBrand.set(brand, (byBrand.get(brand) || 0) + q);
+      const cat = (it.product?.category || 'Uncategorized');
+      const brand = (it.product?.subCategory || 'Unbranded');
+      const name = it.product?.name || 'Unknown';
+      const prevCat = byCategory.get(cat) || { qty: 0, total: 0 };
+      prevCat.qty += q;
+      prevCat.total += lineTotal;
+      byCategory.set(cat, prevCat);
+      const prevBrand = byBrand.get(brand) || { qty: 0, total: 0 };
+      prevBrand.qty += q;
+      prevBrand.total += lineTotal;
+      byBrand.set(brand, prevBrand);
+      const prev = productsMap.get(name) || { name, qty: 0, totalAmount: 0 };
+      prev.qty += q;
+      prev.totalAmount += lineTotal;
+      productsMap.set(name, prev);
     }
 
     // Resolve names for staff
     const cashierIds = Array.from(salesByCashier.keys()).filter(Boolean) as string[];
     const users = cashierIds.length
-      ? await this.prisma.user.findMany({ where: { id: { in: cashierIds } }, select: { id: true, username: true, firstName: true, surname: true } })
+      ? await this.prisma.user.findMany({ where: { id: { in: cashierIds } }, select: { id: true, username: true, firstName: true, surname: true, email: true } })
       : [];
     const cashierList = cashierIds.map((id) => {
       const u = users.find((x) => x.id === id);
       const name = u ? ((u.firstName || '') + (u.surname ? ` ${u.surname}` : '') || u.username) : 'Unknown';
-      return { id, name, totalSales: salesByCashier.get(id) || 0 };
+      const total = salesByCashier.get(id) || 0;
+      return { id, name, total, email: u?.email || null };
     });
-
-    // Branch/section names
-    const [branch, section] = await Promise.all([
-      this.prisma.branch.findUnique({ where: { id: shift.branchId }, select: { id: true, name: true } }),
-      shift.sectionId ? this.prisma.section.findUnique({ where: { id: shift.sectionId }, select: { id: true, name: true } }) : Promise.resolve(null),
-    ]);
 
     return {
       shift: {
         id: shift.id,
         branchId: shift.branchId,
-        branchName: branch?.name || '',
+        branchName,
+        branchLocation,
         sectionId: shift.sectionId || null,
-        sectionName: section?.name || null,
+        sectionName,
         startedAt: shift.openedAt,
         endedAt: shift.closedAt || null,
         status: shift.status,
+        openedByName,
+        openedByEmail,
       },
       summary: {
         totalSales,
         byMethod,
         totalCreditSales,
+        totalDiscounts,
+        totalExpenses,
       },
       items: {
         totalItemsSold,
-        byCategory: Array.from(byCategory.entries()).map(([name, count]) => ({ name, count })),
-        byBrand: Array.from(byBrand.entries()).map(([name, count]) => ({ name, count })),
+        products: Array.from(productsMap.values()).map(p => ({ name: p.name, count: p.qty, totalAmount: p.totalAmount })),
+        byCategory: Array.from(byCategory.entries()).map(([name, v]) => ({ name, count: v.qty, totalAmount: v.total })),
+        byBrand: Array.from(byBrand.entries()).map(([name, v]) => ({ name, count: v.qty, totalAmount: v.total })),
       },
       staff: {
         cashiers: cashierList,

@@ -16,7 +16,7 @@ export class AuditService {
             action,
             userId: userId || null,
             branchId: branchId || null,
-            meta: meta ? JSON.stringify(meta) : null,
+            meta: meta ?? null,
           },
         });
         return { ok: true };

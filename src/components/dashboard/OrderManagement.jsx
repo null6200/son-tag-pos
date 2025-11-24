@@ -20,25 +20,37 @@ const OrderManagement = ({ user }) => {
   const [viewingOrder, setViewingOrder] = useState(null);
   const [refundingOrder, setRefundingOrder] = useState(null);
   const [printData, setPrintData] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+
   const printRef = useRef();
 
   useEffect(() => {
     const load = async () => {
       try {
-        if (!user?.branchId) { setOrders([]); return; }
-        const rows = await api.orders.list({ branchId: user.branchId });
-        setOrders(rows || []);
+        if (!user?.branchId) { setOrders([]); setTotalCount(0); return; }
+        const res = await api.orders.list({ branchId: user.branchId, page, pageSize });
+        const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+        const total = typeof res?.total === 'number' ? res.total : items.length;
+        setOrders(items || []);
+        setTotalCount(total || 0);
       } catch (_) {
         setOrders([]);
+        setTotalCount(0);
       }
     };
     load();
-  }, [user?.branchId]);
+  }, [user?.branchId, page, pageSize]);
 
   const refreshOrders = async () => {
-    if (!user?.branchId) { setOrders([]); return; }
-    const rows = await api.orders.list({ branchId: user.branchId });
-    setOrders(rows || []);
+    if (!user?.branchId) { setOrders([]); setTotalCount(0); return; }
+    const res = await api.orders.list({ branchId: user.branchId, page: 1, pageSize });
+    const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+    const total = typeof res?.total === 'number' ? res.total : items.length;
+    setOrders(items || []);
+    setTotalCount(total || 0);
+    setPage(1);
   };
 
   const handleConfirmRefund = async (orderId, reason) => {
@@ -49,36 +61,6 @@ const OrderManagement = ({ user }) => {
       toast({ title: 'Refund Processed', description: `Order ${orderId} refunded and stock updated.` });
     } catch (e) {
       toast({ title: 'Refund failed', description: String(e?.message || e), variant: 'destructive' });
-    }
-  };
-
-  // Auto-print when printData is set
-  useEffect(() => {
-    if (printData) {
-      const t = setTimeout(() => {
-        try { window.print(); } catch {}
-        setPrintData(null);
-      }, 100);
-      return () => clearTimeout(t);
-    }
-  }, [printData]);
-
-  const handleViewDetails = async (order) => {
-    try {
-      const full = await api.orders.get(String(order.id));
-      setViewingOrder({ ...order, ...(full || {}) });
-    } catch (_) {
-      setViewingOrder(order);
-    }
-  };
-
-  const handlePrintReceipt = async (order) => {
-    try {
-      const full = await api.orders.get(String(order.id));
-      setPrintData({ type: 'final-receipt', data: { ...(full || order), isReceipt: true } });
-    } catch (_) {
-      setPrintData({ type: 'final-receipt', data: { ...order, isReceipt: true } });
-      toast({ title: 'Printing with limited data', description: 'Full order could not be loaded.' });
     }
   };
 
@@ -96,6 +78,11 @@ const OrderManagement = ({ user }) => {
         return { icon: RefreshCw, color: 'text-blue-500', bgColor: 'bg-blue-100 dark:bg-blue-900/50' };
     }
   };
+
+  const pageCount = Math.max(1, Math.ceil((totalCount || 0) / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = startIndex + (orders?.length || 0);
 
   return (
     <>
@@ -180,6 +167,93 @@ const OrderManagement = ({ user }) => {
                 );
               })}
             </div>
+
+            {totalCount > 0 && (
+              <div className="flex flex-col md:flex-row items-center justify-between gap-3 mt-6 pt-4 border-t">
+                <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <span>
+                    Showing {startIndex + 1}–{Math.min(endIndex, totalCount)} of {totalCount} orders
+                  </span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      const next = parseInt(e.target.value, 10) || 10;
+                      setPageSize(next);
+                      setPage(1);
+                    }}
+                    className="h-8 rounded-md border bg-background px-2 text-xs"
+                  >
+                    <option value={10}>10 / page</option>
+                    <option value={20}>20 / page</option>
+                    <option value={50}>50 / page</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                  >
+                    Prev
+                  </Button>
+                  {(() => {
+                    const buttons = [];
+                    const windowSize = 3;
+                    const start = Math.max(1, safePage - windowSize);
+                    const end = Math.min(pageCount, safePage + windowSize);
+                    if (start > 1) {
+                      buttons.push(
+                        <Button
+                          key={1}
+                          variant={safePage === 1 ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setPage(1)}
+                        >
+                          1
+                        </Button>
+                      );
+                      if (start > 2) buttons.push(<span key="left-ellipsis" className="px-1">…</span>);
+                    }
+                    for (let i = start; i <= end; i++) {
+                      buttons.push(
+                        <Button
+                          key={i}
+                          variant={safePage === i ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setPage(i)}
+                        >
+                          {i}
+                        </Button>
+                      );
+                    }
+                    if (end < pageCount) {
+                      if (end < pageCount - 1) buttons.push(<span key="right-ellipsis" className="px-1">…</span>);
+                      buttons.push(
+                        <Button
+                          key={pageCount}
+                          variant={safePage === pageCount ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setPage(pageCount)}
+                        >
+                          {pageCount}
+                        </Button>
+                      );
+                    }
+                    return buttons;
+                  })()}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => (p < pageCount ? p + 1 : p))}
+                    disabled={safePage >= pageCount}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

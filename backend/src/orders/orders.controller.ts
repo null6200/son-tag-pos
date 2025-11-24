@@ -125,11 +125,15 @@ export class OrdersController {
     @Query('branchId') branchId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
     @Req() req?: any,
   ) {
     const userId = req?.user?.userId as string | undefined;
     const perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
-    return this.orders.list(branchId, from, to, userId, perms);
+    const p = page ? Number(page) : undefined;
+    const ps = pageSize ? Number(pageSize) : undefined;
+    return this.orders.list(branchId, from, to, userId, perms, p, ps);
   }
 
   @UseGuards(PermissionsGuard)
@@ -149,7 +153,7 @@ export class OrdersController {
 
   @UseGuards(PermissionsGuard)
   @Patch(':id/status')
-  @Permissions('add_pos_sell', 'add_payment')
+  @Permissions('add_payment')
   async updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
     return this.orders.updateStatus(id, dto.status);
   }
@@ -170,7 +174,7 @@ export class OrdersController {
 
   @UseGuards(PermissionsGuard)
   @Post(':id/payments')
-  @Permissions('add_pos_sell', 'add_payment')
+  @Permissions('add_payment')
   async addPayment(@Param('id') id: string, @Body() body: PaymentDto) {
     return this.orders.addPayment(id, body);
   }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { FileDown, Eye, XCircle, ArrowLeft, User, Mail, Building, MapPin, DollarSign, TrendingUp, TrendingDown, FileText, CreditCard } from 'lucide-react';
@@ -25,6 +26,35 @@ const ShiftRegisterReport = ({ user }) => {
   const [closingCash, setClosingCash] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [totals, setTotals] = useState({ totalCash: 0, totalCard: 0, totalTransfer: 0, totalOther: 0, totalCredit: 0, grandTotal: 0 });
+  const [currencySymbol, setCurrencySymbol] = useState('₦');
+
+  useEffect(() => {
+    const loadBiz = () => {
+      try {
+        const raw = localStorage.getItem('businessInfo');
+        if (!raw) return;
+        const info = JSON.parse(raw);
+        let sym = (info && (info.currencySymbol || info.currency)) || '₦';
+        if (typeof sym === 'string') {
+          sym = sym.trim();
+          if (/ngn/i.test(sym) || /naira/i.test(sym)) {
+            sym = '₦';
+          }
+          setCurrencySymbol(sym || '₦');
+        }
+      } catch {}
+    };
+    loadBiz();
+    try {
+      const handler = () => loadBiz();
+      window.addEventListener('businessInfoUpdated', handler);
+      return () => { try { window.removeEventListener('businessInfoUpdated', handler); } catch {} };
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  const fmt = (v) => `${currencySymbol}${Number(v || 0).toFixed(2)}`;
 
   const loadShifts = async () => {
     try {
@@ -55,6 +85,34 @@ const ShiftRegisterReport = ({ user }) => {
     loadShifts();
   }, [user?.branchId]);
 
+  const handleExportExcel = () => {
+    try {
+      const payload = {
+        items: shifts,
+        totals,
+        exportedAt: new Date().toISOString(),
+        branchId: user?.branchId || null,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'shift_register_report.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast({ title: 'Export failed', description: String(err?.message || err), variant: 'destructive' });
+    }
+  };
+
+  const handleExportPdf = () => {
+    try {
+      window.print();
+    } catch (err) {
+      toast({ title: 'Export failed', description: String(err?.message || err), variant: 'destructive' });
+    }
+  };
+
   const handleCloseShift = async (e) => {
     e.preventDefault();
     const cashAmount = parseFloat(closingCash);
@@ -84,7 +142,7 @@ const ShiftRegisterReport = ({ user }) => {
   };
 
   if (viewingShift) {
-    return <ShiftDetailsView report={viewingShift} onBack={() => setViewingShift(null)} />;
+    return <ShiftDetailsView report={viewingShift} onBack={() => setViewingShift(null)} fmt={fmt} currencySymbol={currencySymbol} />;
   }
 
   return (
@@ -92,7 +150,14 @@ const ShiftRegisterReport = ({ user }) => {
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle>Shift Register Logs</CardTitle>
-          <Button variant="outline"><FileDown className="mr-2 h-4 w-4" /> Export</Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleExportExcel}>
+              <FileDown className="mr-2 h-4 w-4" /> Export Excel
+            </Button>
+            <Button variant="outline" onClick={handleExportPdf}>
+              <FileDown className="mr-2 h-4 w-4" /> Export PDF
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
@@ -140,12 +205,12 @@ const ShiftRegisterReport = ({ user }) => {
                   <TableCell>{shift.date ? new Date(shift.date).toLocaleDateString() : (shift.openedAt ? new Date(shift.openedAt).toLocaleDateString() : '')}</TableCell>
                   <TableCell>{[shift.branchName, shift.sectionName].filter(Boolean).join(' / ')}</TableCell>
                   <TableCell>{shift.userName || shift.userEmail || 'Unknown'}</TableCell>
-                  <TableCell className="text-right">${(shift.totalCard ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-right">${(shift.totalCash ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-right">${(shift.totalTransfer ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-right">${(shift.totalOther ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-right">${(shift.totalCredit ?? 0).toFixed(2)}</TableCell>
-                  <TableCell className="text-right font-bold">${(shift.grandTotal ?? 0).toFixed(2)}</TableCell>
+                  <TableCell className="text-right">{fmt(shift.totalCard ?? 0)}</TableCell>
+                  <TableCell className="text-right">{fmt(shift.totalCash ?? 0)}</TableCell>
+                  <TableCell className="text-right">{fmt(shift.totalTransfer ?? 0)}</TableCell>
+                  <TableCell className="text-right">{fmt(shift.totalOther ?? 0)}</TableCell>
+                  <TableCell className="text-right">{fmt(shift.totalCredit ?? 0)}</TableCell>
+                  <TableCell className="text-right font-bold">{fmt(shift.grandTotal ?? 0)}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="icon" onClick={() => handleViewShift(shift)}>
                       <Eye className="h-4 w-4" />
@@ -162,12 +227,12 @@ const ShiftRegisterReport = ({ user }) => {
           </Table>
           {shifts.length > 0 && (
             <div className="mt-4 border-t pt-4 text-sm font-semibold flex flex-wrap gap-4 justify-end">
-              <span>Total Card Bills: ${totals.totalCard.toFixed(2)}</span>
-              <span>Total Cash In: ${totals.totalCash.toFixed(2)}</span>
-              <span>Total Bank Transfer: ${totals.totalTransfer.toFixed(2)}</span>
-              <span>Other Payments: ${totals.totalOther.toFixed(2)}</span>
-              <span>Total Debt/Credit: ${totals.totalCredit.toFixed(2)}</span>
-              <span>Grand Total: ${totals.grandTotal.toFixed(2)}</span>
+              <span>Total Card Bills: {fmt(totals.totalCard)}</span>
+              <span>Total Cash In: {fmt(totals.totalCash)}</span>
+              <span>Total Bank Transfer: {fmt(totals.totalTransfer)}</span>
+              <span>Other Payments: {fmt(totals.totalOther)}</span>
+              <span>Total Debt/Credit: {fmt(totals.totalCredit)}</span>
+              <span>Grand Total: {fmt(totals.grandTotal)}</span>
             </div>
           )}
         </CardContent>
@@ -183,7 +248,7 @@ const ShiftRegisterReport = ({ user }) => {
             </DialogHeader>
             <form onSubmit={handleCloseShift} className="space-y-4 pt-4">
               <p className="text-sm text-muted-foreground">
-                Expected amount: <span className="font-bold text-foreground">${(closingShift.expectedCash ?? 0).toFixed(2)}</span>
+                Expected amount: <span className="font-bold text-foreground">{fmt(closingShift.expectedCash ?? 0)}</span>
               </p>
               <div className="space-y-2">
                 <Label htmlFor="closing-cash">Counted Cash Amount</Label>
@@ -201,24 +266,32 @@ const ShiftRegisterReport = ({ user }) => {
   );
 };
 
-const ShiftDetailsView = ({ report, onBack }) => {
+const ShiftDetailsView = ({ report, onBack, fmt, currencySymbol }) => {
   if (!report) return null;
 
   const shift = report.shift || {};
   const summary = report.summary || {};
   const items = report.items || {};
+  const totalSales = Number(summary.totalSales ?? 0);
+  const totalDiscounts = Number(summary.totalDiscounts ?? 0);
+  const totalExpenses = Number(summary.totalExpenses ?? 0);
+  const creditSales = Number(summary.totalCreditSales ?? 0);
+  const netSales = Math.max(0, totalSales - totalDiscounts);
 
-  const totalSales = summary.totalSales ?? 0;
-  const totalPayments = summary.totalSales ?? 0;
-  const creditSales = summary.totalCreditSales ?? 0;
+  const products = Array.isArray(items.products) ? items.products : [];
+  const categories = Array.isArray(items.byCategory) ? items.byCategory : [];
+  const productsByBrand = Array.isArray(items.byBrand) ? items.byBrand : [];
 
-  const products = Array.isArray(items.byCategory) ? items.byCategory : [];
-  const productsByBrand = Array.isArray(items.byBrand)
-    ? items.byBrand.reduce((acc, row) => {
-        acc[row.name || 'Unbranded'] = { quantity: row.count || 0, total: 0 };
-        return acc;
-      }, {})
-    : {};
+  const totalQtyProducts = products.reduce((acc, p) => acc + Number(p.count || 0), 0);
+  const totalQtyByCategory = categories.reduce((acc, c) => acc + Number(c.count || 0), 0);
+  const totalQtyByBrand = productsByBrand.reduce((acc, b) => acc + Number(b.count || 0), 0);
+
+  const firstCashier = Array.isArray(report.staff?.cashiers) && report.staff.cashiers.length > 0
+    ? report.staff.cashiers[0]
+    : null;
+  const displayUserName = shift.openedByName || firstCashier?.name || 'Unknown';
+  const displayUserEmail = shift.openedByEmail || firstCashier?.email || '';
+  const displayLocation = [shift.branchName, shift.sectionName].filter(Boolean).join(' - ') || shift.branchLocation || '';
 
   return (
     <div className="space-y-6">
@@ -226,83 +299,180 @@ const ShiftDetailsView = ({ report, onBack }) => {
 
       <Card className="glass-effect">
         <CardHeader>
-          <CardTitle>Shift Details</CardTitle>
+          <CardTitle>Register Details</CardTitle>
           <CardDescription>
-            Shift from {shift.startedAt ? new Date(shift.startedAt).toLocaleString() : (shift.openedAt ? new Date(shift.openedAt).toLocaleString() : 'Unknown')}
-            {' '}to {shift.endedAt ? new Date(shift.endedAt).toLocaleString() : (shift.closedAt ? new Date(shift.closedAt).toLocaleString() : 'Now')}.
+            {`Register Details (${shift.startedAt ? new Date(shift.startedAt).toLocaleString() : (shift.openedAt ? new Date(shift.openedAt).toLocaleString() : 'Unknown')} - ${shift.endedAt ? new Date(shift.endedAt).toLocaleString() : (shift.closedAt ? new Date(shift.closedAt).toLocaleString() : 'Now')})`}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-8">
 
+          {/* Payment summary table */}
           <section>
-            <h3 className="text-lg font-semibold mb-2">User & Location Details</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <InfoItem icon={User} label="Username" value={shift.openedByUsername || shift.openedById || 'Unknown'} />
-              <InfoItem icon={Mail} label="Email" value={shift.openedByEmail || 'Unknown'} />
-              <InfoItem icon={Building} label="Branch" value={shift.branchName || 'Unknown'} />
-              <InfoItem icon={MapPin} label="Section" value={shift.sectionName || 'Unknown'} />
+            <h3 className="text-lg font-semibold mb-2">Payment Summary</h3>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Payment Method</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(() => {
+                  const byMethod = summary.byMethod || {};
+                  const rows = [];
+
+                  const cash = Number(byMethod.cash || byMethod['cash payment'] || 0);
+                  const card = Number(byMethod.card || byMethod['card payment'] || 0);
+                  const transfer = Number(byMethod.transfer || byMethod['bank transfer'] || 0);
+                  const otherKeys = Object.keys(byMethod).filter(k => !['cash','cash payment','card','card payment','transfer','bank transfer'].includes(k));
+                  const other = otherKeys.reduce((acc, k) => acc + Number(byMethod[k] || 0), 0);
+                  rows.push({ label: 'Cash Payment', amount: cash });
+                  rows.push({ label: 'Card Payment', amount: card });
+                  rows.push({ label: 'Bank Transfer', amount: transfer });
+                  if (other !== 0) rows.push({ label: 'Other Payments', amount: other });
+                  return (
+                    <>
+                      {rows.map(r => (
+                        <TableRow key={r.label}>
+                          <TableCell>{r.label}</TableCell>
+                          <TableCell className="text-right">{fmt(r.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </>
+                  );
+                })()}
+              </TableBody>
+            </Table>
+          </section>
+
+          {/* Totals block similar to reference layout */}
+          <section className="border rounded-md overflow-hidden text-sm">
+            <div className="grid grid-cols-2">
+              <div className="px-3 py-2 font-semibold border-b">Net Sales</div>
+              <div className="px-3 py-2 border-b text-right bg-green-50 font-semibold">{fmt(netSales)}</div>
+
+              <div className="px-3 py-2 font-semibold border-b">Total Discount</div>
+              <div className="px-3 py-2 border-b text-right bg-red-50">{fmt(totalDiscounts)}</div>
+
+              <div className="px-3 py-2 font-semibold border-b">Total Payment</div>
+              <div className="px-3 py-2 border-b text-right bg-green-50 font-semibold">{fmt(totalSales)}</div>
+
+              <div className="px-3 py-2 font-semibold border-b">Credit Sales</div>
+              <div className="px-3 py-2 border-b text-right bg-yellow-50">{fmt(creditSales)}</div>
+
+              <div className="px-3 py-2 font-semibold">Total Expenses</div>
+              <div className="px-3 py-2 text-right bg-red-50">{fmt(totalExpenses)}</div>
             </div>
           </section>
 
+          {/* Details of products sold (per product) */}
           <section>
-            <h3 className="text-lg font-semibold mb-2">Total Sales Breakdown</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <SummaryCard icon={TrendingUp} title="Total Sales" value={totalSales.toFixed(2)} color="text-green-500" />
-              <SummaryCard icon={DollarSign} title="Total Payments" value={totalPayments.toFixed(2)} color="text-blue-500" />
-              <SummaryCard icon={CreditCard} title="Credit Sales" value={creditSales.toFixed(2)} color="text-yellow-500" />
-              <SummaryCard icon={TrendingDown} title="Total Refund" value={(report.summary?.totalRefund || 0).toFixed(2)} color="text-red-500" />
-              <SummaryCard icon={FileText} title="Total Expenses" value={(report.summary?.expenses || 0).toFixed(2)} color="text-orange-500" />
-
+            <h3 className="text-lg font-semibold mb-2">Details of products sold</h3>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">#</TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-center">Quantity</TableHead>
+                  <TableHead className="text-right">Total amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {products.map((p, idx) => (
+                  <TableRow key={p.name || idx}>
+                    <TableCell>{idx + 1}</TableCell>
+                    <TableCell>{p.name}</TableCell>
+                    <TableCell className="text-center">{p.count}</TableCell>
+                    <TableCell className="text-right">{fmt(p.totalAmount ?? 0)}</TableCell>
+                  </TableRow>
+                ))}
+                {products.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-4">No products sold.</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <div className="mt-2 text-sm font-semibold flex justify-between">
+              <span>Total quantity: {totalQtyProducts}</span>
+              <span>Grand Total: {fmt(totalSales)}</span>
             </div>
           </section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <section>
-              <h3 className="text-lg font-semibold mb-2">Products Sold (by Category)</h3>
-
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead className="text-center">Quantity</TableHead>
-                    <TableHead className="text-right">Total Amount</TableHead>
+          {/* Details of products sold (By Category) */}
+          <section>
+            <h3 className="text-lg font-semibold mb-2">Details of products sold (By Category)</h3>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Category</TableHead>
+                  <TableHead className="text-center">Quantity</TableHead>
+                  <TableHead className="text-right">Total amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {categories.map((c, idx) => (
+                  <TableRow key={c.name || idx}>
+                    <TableCell>{c.name}</TableCell>
+                    <TableCell className="text-center">{c.count}</TableCell>
+                    <TableCell className="text-right">{fmt(c.totalAmount ?? 0)}</TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {products.map(p => (
-                    <TableRow key={p.id}>
-                      <TableCell>{p.name}</TableCell>
-                      <TableCell className="text-center">{p.count}</TableCell>
-                      <TableCell className="text-right">-</TableCell>
-
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </section>
-
-            <section>
-              <h3 className="text-lg font-semibold mb-2">Sales by Brand</h3>
-              <Table>
-                <TableHeader>
+                ))}
+                {categories.length === 0 && (
                   <TableRow>
-                    <TableHead>Brand</TableHead>
-                    <TableHead className="text-center">Quantity</TableHead>
-                    <TableHead className="text-right">Total Amount</TableHead>
+                    <TableCell colSpan={3} className="text-center text-muted-foreground py-4">No category data available.</TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Object.entries(productsByBrand).map(([brand, data]) => (
-                    <TableRow key={brand}>
-                      <TableCell>{brand}</TableCell>
-                      <TableCell className="text-center">{data.quantity}</TableCell>
-                      <TableCell className="text-right">${data.total.toFixed(2)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </section>
-          </div>
+                )}
+              </TableBody>
+            </Table>
+            <div className="mt-2 text-sm font-semibold flex justify-between">
+              <span>Total quantity: {totalQtyByCategory}</span>
+              <span>Grand Total: {fmt(totalSales)}</span>
+            </div>
+          </section>
+
+          {/* Details of products sold (By Brand) */}
+          <section>
+            <h3 className="text-lg font-semibold mb-2">Details of products sold (By Brand)</h3>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Brand</TableHead>
+                  <TableHead className="text-center">Quantity</TableHead>
+                  <TableHead className="text-right">Total amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {productsByBrand.map((b, idx) => (
+                  <TableRow key={b.name || idx}>
+                    <TableCell>{b.name || 'Unbranded'}</TableCell>
+                    <TableCell className="text-center">{b.count}</TableCell>
+                    <TableCell className="text-right">{fmt(b.totalAmount ?? 0)}</TableCell>
+                  </TableRow>
+                ))}
+                {productsByBrand.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center text-muted-foreground py-4">No brand data available.</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <div className="mt-2 text-sm font-semibold flex justify-between">
+              <span>Total quantity: {totalQtyByBrand}</span>
+              <span>Grand Total: {fmt(totalSales)}</span>
+            </div>
+          </section>
+
+          {/* User / Email / Location footer, matching reference layout */}
+          <section className="pt-4 border-t mt-4 text-sm">
+            <div className="flex flex-col gap-1">
+              <div> User: <span className="font-semibold">{displayUserName}</span></div>
+              <div> Email: <span className="font-semibold">{displayUserEmail}</span></div>
+              <div>
+                <span className="font-semibold">{displayLocation}</span>
+              </div>
+            </div>
+          </section>
 
         </CardContent>
       </Card>
@@ -318,18 +488,6 @@ const InfoItem = ({ icon: Icon, label, value }) => (
       <p className="font-semibold">{value}</p>
     </div>
   </div>
-);
-
-const SummaryCard = ({ icon: Icon, title, value, color }) => (
-  <Card className="p-4">
-    <div className="flex items-center gap-4">
-      <Icon className={`w-6 h-6 ${color}`} />
-      <div>
-        <p className="text-sm text-muted-foreground">{title}</p>
-        <p className={`text-xl font-bold ${color}`}>${value}</p>
-      </div>
-    </div>
-  </Card>
 );
 
 export default ShiftRegisterReport;

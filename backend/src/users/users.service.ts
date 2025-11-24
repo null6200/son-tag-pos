@@ -259,22 +259,13 @@ export class UsersService {
 
     const user = await this.prisma.user.findUnique({ where: { id }, select: { archived: true } });
     if (!user) throw new NotFoundException('User not found');
-
     if (user.archived) {
-      // Detach orders and delete user
-      await this.prisma.order.updateMany({ where: { userId: id }, data: { userId: null } });
-      await this.prisma.user.delete({ where: { id } });
+      // Already archived: treat as soft-deleted and do nothing else
       return { id, archived: true };
     }
 
-    const salesCount = await this.prisma.order.count({ where: { userId: id } });
-    if (salesCount > 0) {
-      const updated = await this.prisma.user.update({ where: { id }, data: { archived: true }, select: { id: true, archived: true } });
-      return updated;
-    }
-
-    await this.prisma.order.updateMany({ where: { userId: id }, data: { userId: null } });
-    await this.prisma.user.delete({ where: { id } });
-    return { id, archived: true };
+    // Always perform a soft delete by marking archived=true
+    const updated = await this.prisma.user.update({ where: { id }, data: { archived: true }, select: { id: true, archived: true } });
+    return updated;
   }
 }

@@ -42,10 +42,9 @@ export class OrdersService {
     return status === 'DRAFT' || status === 'ACTIVE' || status === 'PENDING_PAYMENT';
   }
 
-  // Overloads for backward compatibility
-  async list(branchId?: string, from?: string, to?: string): Promise<any>;
-  async list(branchId: string | undefined, from: string | undefined, to: string | undefined, userId?: string, perms?: string[]): Promise<any>;
-  async list(branchId?: string, from?: string, to?: string, userId?: string, perms: string[] = []) {
+  // List orders with optional pagination. When page/pageSize are omitted, returns a plain array
+  // to preserve backward compatibility. When provided, returns a { items, total } envelope.
+  async list(branchId?: string, from?: string, to?: string, userId?: string, perms: string[] = [], page?: number, pageSize?: number) {
     const where: any = {
       ...(branchId ? { branchId } : {}),
       ...(from || to
@@ -63,20 +62,86 @@ export class OrdersService {
     if (!hasAll && userId) {
       where.userId = userId;
     }
-    const rows = await this.prisma.order.findMany({
-      where,
-      include: {
-        items: true,
-        payments: true,
-        branch: { select: { id: true, name: true } },
-        section: { select: { id: true, name: true } },
-        table: { select: { id: true, name: true } },
-        drafts: { select: { id: true, subtotal: true, tax: true, discount: true, total: true, serviceType: true, waiterId: true } },
-      } as any,
-      orderBy: { createdAt: 'desc' },
-    });
+    const usePaging = typeof page !== 'undefined' || typeof pageSize !== 'undefined';
+
+    if (!usePaging) {
+      const rows = await this.prisma.order.findMany({
+        where,
+        include: {
+          items: true,
+          payments: true,
+          branch: { select: { id: true, name: true } },
+          section: { select: { id: true, name: true } },
+          table: { select: { id: true, name: true } },
+          drafts: { select: { id: true, subtotal: true, tax: true, discount: true, total: true, serviceType: true, waiterId: true } },
+        } as any,
+        orderBy: { createdAt: 'desc' },
+      });
+      // Add display invoice fields and merge draft data for credit orders
+      return rows.map((o: any) => {
+        const invoice = o.invoice_no || o.invoiceNo || o.receiptNo || (typeof o.orderNumber !== 'undefined' ? String(o.orderNumber) : undefined);
+        const status = String(o.status || '').toUpperCase();
+        const draft = Array.isArray(o.drafts) && o.drafts.length > 0 ? o.drafts[0] : null;
+        const emptyService = !o.serviceType || !String(o.serviceType).trim();
+        const needsDraftFallback =
+          (o.subtotal == null || Number(o.subtotal) === 0) ||
+          (o.tax == null || (Number(o.tax) === 0 && draft?.tax && Number(draft.tax) > 0)) ||
+          (o.discount == null || (Number(o.discount) === 0 && draft?.discount && Number(draft.discount) > 0)) ||
+          ((o.serviceType == null || emptyService) && !!draft?.serviceType);
+        const merged: any = { ...o };
+        if (((status === 'SUSPENDED' || status === 'PENDING_PAYMENT') || needsDraftFallback) && draft) {
+          if (draft.subtotal != null) merged.subtotal = draft.subtotal as any;
+          if (draft.tax != null) merged.tax = draft.tax as any;
+          if (draft.discount != null) merged.discount = draft.discount as any;
+          if (draft.total != null) merged.total = draft.total as any;
+          if (emptyService && draft.serviceType) merged.serviceType = draft.serviceType;
+          if ((!merged.waiterName || !String(merged.waiterName).trim()) && draft.waiterId) merged.waiterId = draft.waiterId;
+        }
+        // Normalize status for display: if sum(payments) >= total, mark PAID
+        // but **never** override terminal statuses like REFUNDED / CANCELLED / VOIDED.
+        try {
+          const total = Number(merged.total ?? 0);
+          const payments = Array.isArray(merged.payments) ? merged.payments : [];
+          const paid = payments.reduce((a: number, p: any) => a + Number(p.amount || 0), 0);
+          const currentStatus = String(merged.status || '').toUpperCase();
+          const isTerminal = currentStatus === 'REFUNDED' || currentStatus === 'CANCELLED' || currentStatus === 'VOIDED';
+          if (!isTerminal && total > 0 && paid >= total) merged.status = 'PAID' as any;
+        } catch {}
+        return {
+          ...merged,
+          displayInvoice: invoice ? String(invoice) : undefined,
+          branchName: merged?.branch?.name || undefined,
+          sectionName: merged?.section?.name || undefined,
+          tableName: merged?.table?.name || undefined,
+          waiter: merged?.waiterName || undefined,
+          serviceType: merged?.serviceType || undefined,
+        };
+      });
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const size = Math.min(Math.max(Number(pageSize) || 20, 1), 200);
+    const skip = (pageNum - 1) * size;
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        include: {
+          items: true,
+          payments: true,
+          branch: { select: { id: true, name: true } },
+          section: { select: { id: true, name: true } },
+          table: { select: { id: true, name: true } },
+          drafts: { select: { id: true, subtotal: true, tax: true, discount: true, total: true, serviceType: true, waiterId: true } },
+        } as any,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: size,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
     // Add display invoice fields and merge draft data for credit orders
-    return rows.map((o: any) => {
+    const mapped = rows.map((o: any) => {
       const invoice = o.invoice_no || o.invoiceNo || o.receiptNo || (typeof o.orderNumber !== 'undefined' ? String(o.orderNumber) : undefined);
       const status = String(o.status || '').toUpperCase();
       const draft = Array.isArray(o.drafts) && o.drafts.length > 0 ? o.drafts[0] : null;
@@ -95,22 +160,27 @@ export class OrdersService {
         if (emptyService && draft.serviceType) merged.serviceType = draft.serviceType;
         if ((!merged.waiterName || !String(merged.waiterName).trim()) && draft.waiterId) merged.waiterId = draft.waiterId;
       }
-      // Normalize status: if sum(payments) >= total, mark PAID for list display
+      // Normalize status for display: if sum(payments) >= total, mark PAID
+      // but **never** override terminal statuses like REFUNDED / CANCELLED / VOIDED.
       try {
         const total = Number(merged.total ?? 0);
         const payments = Array.isArray(merged.payments) ? merged.payments : [];
         const paid = payments.reduce((a: number, p: any) => a + Number(p.amount || 0), 0);
-        if (total > 0 && paid >= total) merged.status = 'PAID' as any;
+        const currentStatus = String(merged.status || '').toUpperCase();
+        const isTerminal = currentStatus === 'REFUNDED' || currentStatus === 'CANCELLED' || currentStatus === 'VOIDED';
+        if (!isTerminal && total > 0 && paid >= total) merged.status = 'PAID' as any;
       } catch {}
       return {
         ...merged,
         displayInvoice: invoice ? String(invoice) : undefined,
         branchName: merged?.branch?.name || undefined,
         sectionName: merged?.section?.name || undefined,
+        tableName: merged?.table?.name || undefined,
         waiter: merged?.waiterName || undefined,
         serviceType: merged?.serviceType || undefined,
       };
     });
+    return { items: mapped, total };
   }
 
   async getOne(id: string) {
@@ -181,7 +251,7 @@ export class OrdersService {
       } catch {}
     }
 
-    return { ...enriched, displayInvoice: invoice, waiter: waiterName } as any;
+    return { ...enriched, displayInvoice: invoice, waiter: waiterName, tableName: (enriched as any)?.table?.name || undefined } as any;
   }
 
   async create(dto: CreateOrderDto, userId?: string) {

@@ -35,8 +35,15 @@ export class DraftsController {
   @UseGuards(PermissionsGuard)
   @Get(':id')
   @Permissions('view_pos_sell')
-  async get(@Param('id') id: string) {
-    return this.drafts.get(id);
+  async get(@Param('id') id: string, @Req() req: any) {
+    const role: string | undefined = req?.user?.role;
+    let userId = req?.user?.userId as string | undefined;
+    let perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
+    if (role === 'ADMIN') {
+      userId = undefined;
+      perms = [...new Set([...(perms || []), 'all'])];
+    }
+    return this.drafts.get(id, userId, perms);
   }
 
   @UseGuards(PermissionsGuard)
@@ -49,14 +56,28 @@ export class DraftsController {
   @UseGuards(PermissionsGuard)
   @Put(':id')
   @Permissions('view_pos_sell', 'edit_pos_sell', 'add_pos_sell', 'view_drafts_all')
-  async update(@Param('id') id: string, @Body() body: any) {
-    return this.drafts.update(id, body);
+  async update(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+    const role: string | undefined = req?.user?.role;
+    let userId = req?.user?.userId as string | undefined;
+    let perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
+    if (role === 'ADMIN') {
+      userId = undefined;
+      perms = [...new Set([...(perms || []), 'all'])];
+    }
+    return this.drafts.update(id, body, userId, perms);
   }
 
   @UseGuards(PermissionsGuard)
   @Delete(':id')
   @Permissions('delete_pos_sell', 'view_drafts_all', 'view_pos_sell', 'add_pos_sell', 'edit_pos_sell')
-  async remove(@Param('id') id: string) {
-    return this.drafts.remove(id);
+  async remove(@Param('id') id: string, @Req() req: any) {
+    const role: string | undefined = req?.user?.role;
+    let userId = req?.user?.userId as string | undefined;
+    let perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
+    if (role === 'ADMIN') {
+      userId = undefined;
+      perms = [...new Set([...(perms || []), 'all'])];
+    }
+    return this.drafts.remove(id, userId, perms);
   }
 }

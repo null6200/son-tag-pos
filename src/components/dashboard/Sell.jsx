@@ -103,7 +103,9 @@ const SalesList = ({ onPrint, user }) => {
                     const total = Number(s.total ?? s.totalAmount ?? 0);
                     const payments = Array.isArray(s.payments) ? s.payments : [];
                     const paid = payments.reduce((a, p) => a + Number(p.amount || 0), 0);
-                    if (paid >= total && total > 0) return { ...s, status: 'PAID' };
+                    const currentStatus = String(s.status || '').toUpperCase();
+                    const isTerminal = currentStatus === 'REFUNDED' || currentStatus === 'CANCELLED' || currentStatus === 'VOIDED';
+                    if (!isTerminal && paid >= total && total > 0) return { ...s, status: 'PAID' };
                 } catch {}
                 return s;
             });
@@ -302,7 +304,13 @@ const SaleDetailModal = ({ isOpen, onClose, sale, onPrint }) => {
                     <InfoItem label="Branch" value={sale.branch?.name} />
                     <InfoItem label="Section" value={sectionName} />
                     <InfoItem label="Service Type" value={sale.serviceType} />
-                    <InfoItem label="Table" value={sale.table?.name || sale.table} />
+                    {(() => {
+                      const tableLabel = sale.table?.name
+                        || sale.tableName
+                        || (typeof sale.table === 'string' && sale.table ? sale.table : null)
+                        || (sale.tableId ? 'Table' : '-');
+                      return <InfoItem label="Table" value={tableLabel} />;
+                    })()}
 
                     <h3 className="font-bold pt-4 border-t mt-4">Items ({(sale.items || []).length})</h3>
                     <div className="space-y-2">

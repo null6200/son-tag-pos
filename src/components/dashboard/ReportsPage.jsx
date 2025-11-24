@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import ShiftRegisterReport from '@/components/dashboard/reports/ShiftRegisterReport';
+import ActivityLog from '@/components/dashboard/reports/ActivityLog';
 
 // Backend-wired reports; graceful fallbacks used only for export printing
 
@@ -348,22 +350,27 @@ const ReportsPage = ({ user }) => {
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold gradient-text mb-2">Reports</h2>
-        <p className="text-muted-foreground">Overview of Table and User/Staff reports</p>
+        <p className="text-muted-foreground">Overview of operational, staff, shift, sales and inventory reports</p>
       </div>
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList>
           <TabsTrigger value="table">Table Reports</TabsTrigger>
           <TabsTrigger value="staff">User/Staff Reports</TabsTrigger>
+          <TabsTrigger value="shift-register">Shift Report</TabsTrigger>
           <TabsTrigger value="sales">Sales</TabsTrigger>
           <TabsTrigger value="inventory">Inventory</TabsTrigger>
           <TabsTrigger value="discounts">Discounts</TabsTrigger>
           <TabsTrigger value="cash">Cash In/Out</TabsTrigger>
+          <TabsTrigger value="activity-log">Activity Log</TabsTrigger>
         </TabsList>
         <TabsContent value="table" className="mt-4">
           <TableReportsSection user={user} />
         </TabsContent>
         <TabsContent value="staff" className="mt-4">
           <StaffReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="shift-register" className="mt-4">
+          <ShiftRegisterReport user={user} />
         </TabsContent>
         <TabsContent value="sales" className="mt-4">
           <SalesReportsSection user={user} />
@@ -376,6 +383,9 @@ const ReportsPage = ({ user }) => {
         </TabsContent>
         <TabsContent value="cash" className="mt-4">
           <CashMovementsReportsSection user={user} />
+        </TabsContent>
+        <TabsContent value="activity-log" className="mt-4">
+          <ActivityLog user={user} />
         </TabsContent>
       </Tabs>
     </div>

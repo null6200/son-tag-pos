@@ -125,7 +125,7 @@ export class InventoryController {
   async adjust(
     @Param('productId') productId: string,
     @Query('branchId') branchId: string,
-    @Body() dto: AdjustStockDto,
+    @Body() dto: any,
     @Req() req: any,
   ) {
     const u = req?.user || {};
@@ -143,7 +143,7 @@ export class InventoryController {
     @Query('sectionId') sectionId: string,
     @Query('sectionName') sectionName: string | undefined,
     @Query('branchId') branchId: string | undefined,
-    @Body() dto: AdjustStockDto,
+    @Body() dto: any,
     @Req() req: any,
   ) {
     const u = req?.user || {};

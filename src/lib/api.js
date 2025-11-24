@@ -66,12 +66,10 @@ try {
           // Don't attempt if we've already marked expired this session
           const expired = (() => { try { return window.sessionStorage?.getItem('auth_expired') === '1'; } catch { return false; } })();
           if (expired) return;
-          // Only refresh if there was user activity in the last 10 minutes
           const now = Date.now();
-          const activeWithin10m = (now - __lastActivityAt) < 10 * 60 * 1000;
-          // Throttle background refresh to once every 20 minutes
+          // Throttle background refresh to once every 20 minutes while tab is open
           const shouldRefresh = (now - __lastRefreshAt) > 20 * 60 * 1000;
-          if (!activeWithin10m || !shouldRefresh) return;
+          if (!shouldRefresh) return;
           // Best-effort refresh; ignore errors (request() path does robust handling on 401s anyway)
           const res = await fetch(`${BASE_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
           if (res && res.ok) { __lastRefreshAt = now; }
@@ -470,6 +468,11 @@ export const api = {
   async me() {
     return request('/users/me');
   },
+  auth: {
+    ping() {
+      return request('/auth/ping', { method: 'POST' });
+    },
+  },
   roles: {
     list({ branchId, includeArchived } = {}) {
       const params = new URLSearchParams();
@@ -798,11 +801,13 @@ export const api = {
     },
   },
   orders: {
-    list({ branchId, from, to } = {}) {
+    list({ branchId, from, to, page, pageSize } = {}) {
       const params = new URLSearchParams();
       if (branchId) params.set('branchId', branchId);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
+      if (page) params.set('page', String(page));
+      if (pageSize) params.set('pageSize', String(pageSize));
       const q = params.toString() ? `?${params.toString()}` : '';
       return request(`/orders${q}`);
     },
