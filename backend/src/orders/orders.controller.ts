@@ -56,6 +56,13 @@ class CreateOrderDto {
   @IsString()
   tableId?: string | null;
 
+  // When finalising a draft-backed order, the POS can send the backing
+  // orderId so the service can explicitly reuse that order instead of
+  // allocating a new one.
+  @IsOptional()
+  @IsString()
+  orderId?: string;
+
   @IsOptional()
   @IsIn(['DRAFT','ACTIVE','PENDING_PAYMENT','SUSPENDED','PAID','CANCELLED','VOIDED','REFUNDED'])
   status?: OrderStatus;
@@ -95,6 +102,18 @@ class CreateOrderDto {
   @IsNumberString()
   taxRate?: string;
 
+  @IsOptional()
+  @IsString()
+  overrideOwnerId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  replaceItems?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  reuseExisting?: boolean;
+
   // Meta
   @IsOptional()
   @IsString()
@@ -111,6 +130,7 @@ class CreateOrderDto {
 
 class UpdateOrderStatusDto {
   status!: OrderStatus;
+  overrideOwnerId?: string;
 }
 
 @UseGuards(JwtAuthGuard)
@@ -130,10 +150,15 @@ export class OrdersController {
     @Req() req?: any,
   ) {
     const userId = req?.user?.userId as string | undefined;
+    const role = req?.user?.role as string | undefined;
     const perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
+    const canSeeAll = role === 'ADMIN'
+      || (perms || []).includes('all')
+      || (perms || []).includes('view_sales_all');
+    const effectiveUserId = canSeeAll ? undefined : userId;
     const p = page ? Number(page) : undefined;
     const ps = pageSize ? Number(pageSize) : undefined;
-    return this.orders.list(branchId, from, to, userId, perms, p, ps);
+    return this.orders.list(branchId, from, to, effectiveUserId, perms, p, ps);
   }
 
   @UseGuards(PermissionsGuard)
@@ -148,34 +173,66 @@ export class OrdersController {
   @Permissions('add_pos_sell')
   async create(@Body() dto: CreateOrderDto, @Req() req: any) {
     const userId = req.user?.userId as string | undefined;
-    return this.orders.create(dto, userId);
+    const overrideOwnerId = (dto as any)?.overrideOwnerId as string | undefined;
+    return this.orders.create(dto, userId, overrideOwnerId);
+  }
+
+  @UseGuards(PermissionsGuard)
+  @Patch(':id')
+  @Permissions('add_payment')
+  async updateOrder(@Param('id') id: string, @Body() body: { subtotal?: string; discount?: string; tax?: string; total?: string; taxRate?: string }, @Req() req: any) {
+    const userId = req?.user?.userId as string | undefined;
+    return this.orders.updateTotals(id, body, userId);
   }
 
   @UseGuards(PermissionsGuard)
   @Patch(':id/status')
   @Permissions('add_payment')
-  async updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto) {
-    return this.orders.updateStatus(id, dto.status);
+  async updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: any) {
+    const userId = req?.user?.userId as string | undefined;
+    const overrideOwnerId = dto.overrideOwnerId as string | undefined;
+    const updated = await this.orders.updateStatus(id, dto.status, false, userId);
+    if (overrideOwnerId && String(dto.status).toUpperCase() === 'SUSPENDED') {
+      await this.orders.logOverrideSuspend(id, userId, overrideOwnerId);
+    }
+    return updated;
   }
 
   @UseGuards(PermissionsGuard)
   @Post(':id/refund')
   @Permissions('access_all_sale_returns')
-  async refund(@Param('id') id: string) {
-    return this.orders.refund(id);
+  async refund(@Param('id') id: string, @Body() body: { overrideOwnerId?: string }, @Req() req: any) {
+    const userId = req?.user?.userId as string | undefined;
+    const overrideOwnerId = body?.overrideOwnerId as string | undefined;
+    return this.orders.refund(id, userId, overrideOwnerId);
   }
 
   @UseGuards(PermissionsGuard)
   @Post(':id/refund-items')
   @Permissions('access_all_sale_returns')
-  async refundItems(@Param('id') id: string, @Body() body: { items: RefundItemDto[] }) {
-    return this.orders.refundItems(id, Array.isArray(body?.items) ? body.items : []);
+  async refundItems(@Param('id') id: string, @Body() body: { items: RefundItemDto[]; overrideOwnerId?: string }, @Req() req: any) {
+    const userId = req?.user?.userId as string | undefined;
+    const overrideOwnerId = body?.overrideOwnerId as string | undefined;
+    return this.orders.refundItems(id, Array.isArray(body?.items) ? body.items : [], userId, overrideOwnerId);
   }
 
   @UseGuards(PermissionsGuard)
   @Post(':id/payments')
   @Permissions('add_payment')
-  async addPayment(@Param('id') id: string, @Body() body: PaymentDto) {
-    return this.orders.addPayment(id, body);
+  async addPayment(@Param('id') id: string, @Body() body: PaymentDto, @Req() req: any) {
+    const userId = req?.user?.userId as string | undefined;
+    return this.orders.addPayment(id, body, userId);
+  }
+
+  @UseGuards(PermissionsGuard)
+  @Post(':id/events')
+  @Permissions('add_pos_sell')
+  async logEvent(
+    @Param('id') id: string,
+    @Body() body: { action: string; meta?: any },
+    @Req() req: any,
+  ) {
+    const userId = req?.user?.userId as string | undefined;
+    return this.orders.logSaleEvent(id, { userId, action: body.action, meta: body.meta });
   }
 }

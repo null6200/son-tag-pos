@@ -11,6 +11,10 @@ const OrderDetailsModal = ({ order, isOpen, onClose }) => {
   const staff = order.cashier || order.userName || order.user?.username || order.staff;
   const items = Array.isArray(order.items) ? order.items : [];
   const total = Number(order.total ?? order.totalAmount ?? 0);
+  const businessInfo = (() => { try { return JSON.parse(localStorage.getItem('businessInfo') || '{}'); } catch { return {}; } })();
+  let currencySymbol = businessInfo?.currencySymbol || businessInfo?.currency || '₦';
+  if (/ngn|nigeria/i.test(String(currencySymbol))) currencySymbol = '₦';
+
   const invoiceLabel = (() => {
     const raw = order.displayInvoice || order.invoice_no || order.invoiceNo || order.receiptNo || (order.orderNumber != null ? String(order.orderNumber) : null) || (order.id && order.id.slice ? order.id.slice(0,8) : String(order.id));
     if (order.orderNumber != null) return `INV${String(order.orderNumber).padStart(3,'0')}`;
@@ -61,8 +65,8 @@ const OrderDetailsModal = ({ order, isOpen, onClose }) => {
                 <TableRow key={index}>
                   <TableCell>{name}</TableCell>
                   <TableCell className="text-center">{qty}</TableCell>
-                  <TableCell className="text-right">${price.toFixed(2)}</TableCell>
-                  <TableCell className="text-right">${sub.toFixed(2)}</TableCell>
+                  <TableCell className="text-right">{currencySymbol}{price.toFixed(2)}</TableCell>
+                  <TableCell className="text-right">{currencySymbol}{sub.toFixed(2)}</TableCell>
                 </TableRow>
                 );
               })}
@@ -72,7 +76,7 @@ const OrderDetailsModal = ({ order, isOpen, onClose }) => {
         <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
           <div className="flex justify-end items-center text-lg font-bold">
             <span className="text-muted-foreground mr-4">Total:</span>
-            <span className="gradient-text">${total.toFixed(2)}</span>
+            <span className="gradient-text">{currencySymbol}{total.toFixed(2)}</span>
           </div>
         </div>
         <DialogFooter>

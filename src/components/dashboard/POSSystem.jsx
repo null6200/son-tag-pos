@@ -41,6 +41,13 @@ const POSSystem = ({ user, initialShift, onBackToDashboard, onLogout, onOpenProf
   const [checkedCurrent, setCheckedCurrent] = useState(false);
   const pinnedShiftIdRef = React.useRef(initialShift?.id || null);
 
+  // Ensure pinned ref is updated when user selects a shift from the modal
+  React.useEffect(() => {
+    if (initialShift?.id) {
+      pinnedShiftIdRef.current = initialShift.id;
+    }
+  }, [initialShift?.id]);
+
   // Helper component that throws inside ErrorBoundary subtree
   const Thrower = ({ error }) => {
     if (error) { throw error; }
@@ -256,6 +263,8 @@ const POSSystem = ({ user, initialShift, onBackToDashboard, onLogout, onOpenProf
   }, [hookShift]);
 
   useEffect(() => {
+    // Don't clear shift if user explicitly selected one from the modal
+    if (pinnedShiftIdRef.current) return;
     if (!hookShift && checkedCurrent) {
       setShiftRegister(null);
       setIsLoading(false);

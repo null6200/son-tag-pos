@@ -282,7 +282,12 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Best-effort backend logout so it can record an audit entry
+    try {
+      await api.auth?.logout?.();
+    } catch {}
+
     // Clear in-memory state first
     setCurrentUser(null);
     setAuthToken(null);

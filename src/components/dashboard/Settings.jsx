@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Sun, Moon, Bell, Database, Printer, FileText, Briefcase, Percent, Tag, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { Sun, Moon, Bell, Database, Printer, FileText, Briefcase, Percent, Tag, UserCheck } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -23,11 +23,9 @@ const Settings = ({ theme, setTheme, user, setActiveTab }) => {
   const [invoiceFooterNote, setInvoiceFooterNote] = React.useState('');
   const [branches, setBranches] = React.useState([]);
   const [targetBranchId, setTargetBranchId] = React.useState('');
-  const [overridePin, setOverridePin] = React.useState('');
-  const [graceWindow, setGraceWindow] = React.useState(5);
-  const [showPin, setShowPin] = React.useState(false);
   const [emailEnabled, setEmailEnabled] = React.useState(false);
   const [pushEnabled, setPushEnabled] = React.useState(false);
+  const [autoSelectLoggedInAsServiceStaff, setAutoSelectLoggedInAsServiceStaff] = React.useState(false);
 
   React.useEffect(() => {
     (async () => {
@@ -37,8 +35,6 @@ const Settings = ({ theme, setTheme, user, setActiveTab }) => {
         const bs = await api.branches.list();
         setBranches(bs || []);
         if (defaultBranchId) {
-          const s = await api.hrm.overridePin.get({ branchId: defaultBranchId });
-          if (typeof s?.graceSeconds === 'number') setGraceWindow(Number(s.graceSeconds));
           const cfg = await api.settings.get({ branchId: defaultBranchId });
           if (cfg) {
             if (cfg.printerType) setPrinterType(cfg.printerType);
@@ -48,6 +44,7 @@ const Settings = ({ theme, setTheme, user, setActiveTab }) => {
             if (cfg.invoiceLayout) setInvoiceLayout(cfg.invoiceLayout);
             if (typeof cfg.receiptFooterNote === 'string') setReceiptFooterNote(cfg.receiptFooterNote);
             if (typeof cfg.invoiceFooterNote === 'string') setInvoiceFooterNote(cfg.invoiceFooterNote);
+            if (typeof cfg.autoSelectLoggedInAsServiceStaff === 'boolean') setAutoSelectLoggedInAsServiceStaff(cfg.autoSelectLoggedInAsServiceStaff);
           }
           // Load notification prefs
           try {
@@ -127,26 +124,6 @@ const Settings = ({ theme, setTheme, user, setActiveTab }) => {
     } catch (e) {
       toast({ title: 'Failed to clear local data', description: String(e?.message || e), variant: 'destructive' });
     }
-  };
-
-  const handleSaveOverride = async () => {
-    try {
-      if (!targetBranchId) {
-        toast({ title: 'Select a branch', description: 'Choose a branch to apply the PIN.', variant: 'destructive' });
-        return;
-      }
-      await api.hrm.overridePin.set({ branchId: targetBranchId, pin: overridePin, graceSeconds: Number(graceWindow) || 5 });
-      toast({ title: 'Override PIN saved', description: 'PIN and grace window updated for the selected branch.' });
-      setOverridePin('');
-    } catch (e) {
-      toast({ title: 'Failed to save PIN', description: String(e?.message || e), variant: 'destructive' });
-    }
-  };
-
-  const generateRandomPin = () => {
-    const pin = Math.floor(1000 + Math.random() * 9000).toString();
-    setOverridePin(pin);
-    toast({ title: 'Generated PIN', description: 'Click Save to apply to the selected branch.' });
   };
 
   const handleSaveSettings = async (settingName) => {
@@ -291,7 +268,6 @@ const Settings = ({ theme, setTheme, user, setActiveTab }) => {
         </Card>
       </motion.div>
 
-      {/* Override PIN management moved here */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -299,39 +275,39 @@ const Settings = ({ theme, setTheme, user, setActiveTab }) => {
       >
         <Card className="glass-effect border-2 border-white/30 dark:border-slate-700/50">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><KeyRound />Override / Void PIN</CardTitle>
-            <CardDescription>Manage branch-level override PIN used for destructive actions in POS.</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <UserCheck />
+              POS Settings
+            </CardTitle>
+            <CardDescription>Configure Point of Sale behavior.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2 md:col-span-1">
-                <Label>Branch</Label>
-                <Select value={targetBranchId} onValueChange={setTargetBranchId}>
-                  <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
-                  <SelectContent>
-                    {(branches || []).map(b => (
-                      <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="flex items-center justify-between p-4 rounded-lg bg-white/20 dark:bg-slate-800/20">
+              <div className="space-y-0.5">
+                <Label htmlFor="auto-select-staff" className="font-semibold text-gray-700 dark:text-gray-300">
+                  Auto-select logged-in user as service staff
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  When enabled, the logged-in user will be automatically selected as the service staff in POS.
+                </p>
               </div>
-              <div className="space-y-2 md:col-span-1">
-                <Label>New PIN</Label>
-                <div className="relative">
-                  <Input type={showPin ? 'text' : 'password'} value={overridePin} onChange={(e) => setOverridePin(e.target.value)} placeholder="4-digit PIN" />
-                  <Button type="button" variant="ghost" size="icon" className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8" onClick={() => setShowPin(p => !p)}>
-                    {showPin ? <EyeOff className="w-4 h-4"/> : <Eye className="w-4 h-4"/>}
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-2 md:col-span-1">
-                <Label>Grace (seconds)</Label>
-                <Input type="number" min="0" value={graceWindow} onChange={(e) => setGraceWindow(parseInt(e.target.value || '0', 10))} />
-              </div>
-              <div className="flex items-end gap-2 md:col-span-1">
-                <Button type="button" onClick={generateRandomPin}>Generate</Button>
-                <Button type="button" onClick={handleSaveOverride}>Save</Button>
-              </div>
+              <Switch
+                id="auto-select-staff"
+                checked={autoSelectLoggedInAsServiceStaff}
+                onCheckedChange={async (checked) => {
+                  try {
+                    setAutoSelectLoggedInAsServiceStaff(checked);
+                    await api.settings.update({
+                      branchId: targetBranchId || user?.branchId,
+                      autoSelectLoggedInAsServiceStaff: checked,
+                    });
+                    toast({ title: 'POS Settings', description: checked ? 'Auto-select enabled' : 'Auto-select disabled' });
+                  } catch (e) {
+                    setAutoSelectLoggedInAsServiceStaff(!checked); // revert
+                    toast({ title: 'Failed to update', description: String(e?.message || e), variant: 'destructive' });
+                  }
+                }}
+              />
             </div>
           </CardContent>
         </Card>

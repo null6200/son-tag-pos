@@ -61,6 +61,8 @@ export class PriceListsController {
   }
 
   @Delete(':id')
+  @UseGuards(PermissionsGuard)
+  @Permissions('section_pricing')
   async remove(@Param('id') id: string) {
     return { ok: true, id };
   }

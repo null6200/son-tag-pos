@@ -102,10 +102,7 @@ const Overview = ({ user }) => {
 
   const perms = Array.isArray(user?.permissions) ? user.permissions : [];
   const canSeeKPIs = hasAny(perms, [
-    'view_purchase_sell_report',
-    'view_profit_loss_report',
-    'view_stock_related_reports',
-    'view_home_data'
+    'view_home_data',
   ]);
   const canUseFilters = canSeeKPIs; // only allow filters for reporting-capable roles
 
@@ -233,6 +230,19 @@ const Overview = ({ user }) => {
         const dailyByBranch = Array.isArray(res?.dailyByBranch) ? res.dailyByBranch : [];
         const dailyBySection = Array.isArray(res?.dailyBySection) ? res.dailyBySection : [];
 
+        // Prepare target branches and fetch orders once for all fallbacks/reconstructions
+        const targetBranches = branchId ? [branchId] : (branches || []).map(b => b.id).filter(Boolean);
+        let allOrders = [];
+        try {
+          const orderLists = await Promise.all(targetBranches.map(async (bid) => {
+            try {
+              const resp = await api.orders.list({ branchId: bid, from, to });
+              return Array.isArray(resp?.items) ? resp.items : (Array.isArray(resp) ? resp : []);
+            } catch { return []; }
+          }));
+          allOrders = orderLists.flat();
+        } catch {}
+
         const combined = [];
         const canonicalSections = (sections || []).map(s => String(s.name || '').trim()).filter(Boolean);
         const canonicalLower = canonicalSections.map(n => n.toLowerCase());
@@ -272,11 +282,6 @@ const Overview = ({ user }) => {
 
         try {
           if (!dailyBySection.length) {
-            const targetBranches = branchId ? [branchId] : (branches || []).map(b => b.id).filter(Boolean);
-            const lists = await Promise.all(targetBranches.map(async (bid) => {
-              try { return await api.orders.list({ branchId: bid, from, to }); } catch { return []; }
-            }));
-            const allOrders = lists.flatMap(resp => Array.isArray(resp?.items) ? resp.items : (Array.isArray(resp) ? resp : []));
             const nameById = Object.fromEntries((sections || []).map(s => [s.id, s.name]));
             const perDaySection = new Map();
             for (const o of allOrders) {
@@ -308,16 +313,10 @@ const Overview = ({ user }) => {
         setFullSalesData(combined);
 
         const t = res?.totals || {};
-        const invoiceDueValue = Number(t.invoiceDue || 0);
 
+        // Compute Total Sell Return fallback from fetched orders
         let totalSellReturnFallback = 0;
         try {
-          const targetBranches = branchId ? [branchId] : (branches || []).map(b => b.id).filter(Boolean);
-          const lists = await Promise.all(targetBranches.map(async (bid) => {
-            const resp = await api.orders.list({ branchId: bid, from, to });
-            return Array.isArray(resp?.items) ? resp.items : (Array.isArray(resp) ? resp : []);
-          }));
-          const allOrders = lists.flat();
           const returns = allOrders.filter(o => {
             const status = String(o?.status || '').toUpperCase();
             const type = String(o?.type || '').toUpperCase();
@@ -334,12 +333,56 @@ const Overview = ({ user }) => {
           }, 0);
         } catch {}
 
-        const apiTotalSellReturn = Number(t.totalSellReturn || 0);
-        const totalSellReturnValue = apiTotalSellReturn > 0 ? apiTotalSellReturn : totalSellReturnFallback;
+        // Compute Invoice Due fallback and Net Sales fallback
+        let invoiceDueFallback = 0;
+
+        let grossRealized = 0;
+        try {
+          for (const o of allOrders) {
+            const status = String(o?.status || '').toUpperCase();
+            const type = String(o?.type || '').toUpperCase();
+            const hasRefundField = Number(o?.refundTotal || o?.refundedAmount || 0) > 0;
+            const negativeTotal = Number(o?.totalAmount ?? o?.total ?? 0) < 0;
+            const negativeItems = Array.isArray(o?.items) && o.items.every(it => Number(it?.qty || 0) < 0);
+            const isReturnOrder = status === 'REFUNDED' || status === 'CANCELLED' || o?.refunded === true || hasRefundField || negativeTotal || type === 'RETURN' || negativeItems;
+
+            const total = Number(o?.totalAmount ?? o?.total ?? 0) || 0;
+            const paymentsSum = Array.isArray(o?.payments) ? o.payments.reduce((s,p) => s + Number(p?.amount ?? p?.paid ?? p?.value ?? 0), 0) : 0;
+            const paidCandidates = [o?.paidAmount, o?.totalPaid, o?.amountPaid, o?.paid].map(x => Number(x || 0));
+            const paid = Math.max(0, paymentsSum, ...paidCandidates);
+            const dueCandidates = [o?.balance, o?.dueAmount, o?.amountDue, o?.outstanding, o?.amountRemaining, o?.remainingBalance, o?.unpaidAmount].map(x => Number(x || 0));
+            const dueField = Math.max(0, ...dueCandidates);
+            const dueCalc = Math.max(0, total - paid);
+            const due = Math.max(dueField, dueCalc);
+
+            const s = status; // already uppercase above
+            // Strict: only count true credit statuses
+            const isDueStatus = (s === 'SUSPENDED' || s === 'PENDING_PAYMENT');
+
+            if (!isReturnOrder && isDueStatus) {
+              invoiceDueFallback += due;
+            }
+
+            if (!isReturnOrder && due <= 0.0001 && total > 0) {
+              grossRealized += total;
+            }
+          }
+        } catch {}
+
+        const apiTotalSellReturn = t.totalSellReturn;
+        const hasTotalSellReturn = apiTotalSellReturn !== undefined && apiTotalSellReturn !== null;
+        const totalSellReturnValue = hasTotalSellReturn ? Number(apiTotalSellReturn || 0) : totalSellReturnFallback;
+
+        const hasNetSalesFromApi = t.netSales !== undefined && t.netSales !== null;
+        const netSalesFallback = Math.max(0, grossRealized - totalSellReturnValue);
+        const netSalesValue = hasNetSalesFromApi ? Number(t.netSales || 0) : netSalesFallback;
+
+        const hasInvoiceDueFromApi = t.invoiceDue !== undefined && t.invoiceDue !== null;
+        const invoiceDueValue = hasInvoiceDueFromApi ? Number(t.invoiceDue || 0) : invoiceDueFallback;
 
         setStats([
           { title: 'Total Sales', value: t.totalSales || 0, icon: ShoppingCart, color: 'bg-cyan-500' },
-          { title: 'Net Sales', value: t.netSales || 0, icon: FileText, color: 'bg-green-500' },
+          { title: 'Net Sales', value: netSalesValue || 0, icon: FileText, color: 'bg-green-500' },
           { title: 'Invoice Due', value: invoiceDueValue || 0, icon: AlertCircle, color: 'bg-orange-500' },
           { title: 'Total Sell Return', value: totalSellReturnValue || 0, icon: RefreshCw, color: 'bg-red-500' },
           { title: 'Total Purchase', value: t.totalPurchase || 0, icon: DollarSign, color: 'bg-cyan-500' },
@@ -398,7 +441,7 @@ const Overview = ({ user }) => {
   }, [fullSalesData]);
   
   // Derive series names from data plus known section names for selected branch
-  const dynamicBranchNames = Array.from(new Set([
+  const sectionNames = Array.from(new Set([
     ...(filteredSalesData.flatMap(row => Object.keys(row).filter(k => {
       const nk = String(k).trim();
       if (nk === 'date') return false;
@@ -408,7 +451,7 @@ const Overview = ({ user }) => {
     }))),
     ...((sections || []).map(s => s.name).filter(Boolean)),
   ]));
-  const chartLocations = dynamicBranchNames.map((name, index) => ({
+  const chartLocations = sectionNames.map((name, index) => ({
     name,
     color: colorPalette[index % colorPalette.length],
   }));
@@ -422,7 +465,7 @@ const Overview = ({ user }) => {
   const currentYear = new Date().getFullYear();
   const monthKeys = Array.from({ length: 12 }, (_, i) => format(new Date(currentYear, i, 1), 'MMM-yyyy'));
   const allKeys = Array.from(new Set([
-    ...dynamicBranchNames,
+    ...sectionNames,
     totalSeries.name,
   ]));
   const monthlyMap = new Map();
@@ -562,71 +605,72 @@ const Overview = ({ user }) => {
       </div>
 
       {canSeeKPIs && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 p-6">
-          {stats.map((stat, index) => (
-            <StatCard key={stat.title} {...stat} index={index} formatCurrency={formatCurrency} />
-          ))}
-        </div>
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 p-6">
+            {stats.map((stat, index) => (
+              <StatCard key={stat.title} {...stat} index={index} formatCurrency={formatCurrency} />
+            ))}
+          </div>
+
+          <div className="p-6 pt-0">
+            <Card className="bg-white dark:bg-slate-800">
+              <CardContent className="p-4">
+                <h2 className="text-lg font-semibold mb-4">Sales Last 30 Days</h2>
+                <div className="h-[350px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={filteredSalesData} margin={{ top: 10, right: 160, left: 16, bottom: 30 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.15)" />
+                      <XAxis dataKey="date" fontSize={11} tickLine={false} axisLine={false} angle={-40} dy={20} height={60} />
+                      <YAxis tickFormatter={formatYAxis} fontSize={12} tickLine={false} axisLine={false} label={{ value: `Total Sales (${businessInfo?.currency || 'NGN'})`, angle: -90, position: 'insideLeft' }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ paddingLeft: 12 }} content={renderLegend} />
+                      {chartLocations
+                        .filter(loc => effectiveKeys.includes(loc.name))
+                        .map(loc => (
+                          <Line key={loc.name} type="monotone" dataKey={loc.name} stroke={loc.color} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} name={loc.name} />
+                        ))}
+                      {effectiveKeys.includes(totalSeries.name) && (
+                        <Line type="monotone" dataKey={totalSeries.name} stroke={totalSeries.color} strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} name={totalSeries.name} />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Current Financial Year (monthly) */}
+          <div className="p-6 pt-0">
+            <Card className="bg-white dark:bg-slate-800">
+              <CardContent className="p-4">
+                <h2 className="text-lg font-semibold mb-4">Sales Current Financial Year</h2>
+                <div className="h-[350px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={monthlyData} margin={{ top: 10, right: 160, left: 16, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.15)" />
+                      <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} />
+                      <YAxis tickFormatter={formatYAxis} fontSize={12} tickLine={false} axisLine={false} label={{ value: `Total Sales (${businessInfo?.currency || 'NGN'})`, angle: -90, position: 'insideLeft' }}/>
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ paddingLeft: 12 }} content={renderLegend} />
+                      {chartLocations
+                        .filter(loc => effectiveKeys.includes(loc.name))
+                        .map(loc => (
+                          <Line key={loc.name} type="monotone" dataKey={loc.name} stroke={loc.color} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} name={loc.name} />
+                        ))}
+                      {effectiveKeys.includes(totalSeries.name) && (
+                        <Line type="monotone" dataKey={totalSeries.name} stroke={totalSeries.color} strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} name={totalSeries.name} />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </>
       )}
 
-      <div className="p-6 pt-0">
-        <Card className="bg-white dark:bg-slate-800">
-          <CardContent className="p-4">
-            <h2 className="text-lg font-semibold mb-4">Sales Last 30 Days</h2>
-            <div className="h-[350px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={filteredSalesData} margin={{ top: 10, right: 160, left: 16, bottom: 30 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.15)" />
-                  <XAxis dataKey="date" fontSize={11} tickLine={false} axisLine={false} angle={-40} dy={20} height={60} />
-                  <YAxis tickFormatter={formatYAxis} fontSize={12} tickLine={false} axisLine={false} label={{ value: `Total Sales (${businessInfo?.currency || 'NGN'})`, angle: -90, position: 'insideLeft' }} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ paddingLeft: 12 }} content={renderLegend} />
-                  {chartLocations
-                    .filter(loc => effectiveKeys.includes(loc.name))
-                    .map(loc => (
-                      <Line key={loc.name} type="monotone" dataKey={loc.name} stroke={loc.color} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} name={loc.name} />
-                    ))}
-                  {effectiveKeys.includes(totalSeries.name) && (
-                    <Line type="monotone" dataKey={totalSeries.name} stroke={totalSeries.color} strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} name={totalSeries.name} />
-                  )}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-
-{/* Current Financial Year (monthly) */}
-<div className="p-6 pt-0">
-<Card className="bg-white dark:bg-slate-800">
-<CardContent className="p-4">
-<h2 className="text-lg font-semibold mb-4">Sales Current Financial Year</h2>
-<div className="h-[350px]">
-<ResponsiveContainer width="100%" height="100%">
-  <LineChart data={monthlyData} margin={{ top: 10, right: 160, left: 16, bottom: 10 }}>
-    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.15)" />
-    <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} />
-    <YAxis tickFormatter={formatYAxis} fontSize={12} tickLine={false} axisLine={false} label={{ value: `Total Sales (${businessInfo?.currency || 'NGN'})`, angle: -90, position: 'insideLeft' }}/>
-    <Tooltip content={<CustomTooltip />} />
-    <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ paddingLeft: 12 }} content={renderLegend} />
-    {chartLocations
-      .filter(loc => effectiveKeys.includes(loc.name))
-      .map(loc => (
-        <Line key={loc.name} type="monotone" dataKey={loc.name} stroke={loc.color} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} name={loc.name} />
-      ))}
-    {effectiveKeys.includes(totalSeries.name) && (
-      <Line type="monotone" dataKey={totalSeries.name} stroke={totalSeries.color} strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} name={totalSeries.name} />
-    )}
-  </LineChart>
-</ResponsiveContainer>
-</div>
-</CardContent>
-</Card>
-</div>
-
-</div>
-);
+    </div>
+  );
 };
 
 export default Overview;

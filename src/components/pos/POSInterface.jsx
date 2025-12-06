@@ -1,31 +1,4 @@
-  
-// Normalize prices payload from backend into a simple { [productId]: number } map
-function normalizePricesMap(prices) {
-  const out = {};
-  try {
-    if (!prices) return out;
-    if (Array.isArray(prices)) {
-      for (const row of prices) {
-        const pid = String(row?.productId ?? row?.id ?? row?.product?.id ?? '');
-        if (!pid) continue;
-        const val = Number(row?.price ?? row?.amount ?? row?.value);
-        out[pid] = Number.isFinite(val) ? val : 0;
-      }
-      return out;
-    }
-    if (typeof prices === 'object') {
-      for (const [k, v] of Object.entries(prices)) {
-        const key = String(k);
-        const val = Number(v);
-        out[key] = Number.isFinite(val) ? val : 0;
-      }
-      return out;
-    }
-  } catch {}
-  return out;
-}
-
-    import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Plus, Minus, X, Wifi, WifiOff, Sun, Moon, Bell, Coffee, Wallet, Trash2, ChevronDown, ArrowLeft, Eye, DollarSign, Info, FileText, FolderOpen, CreditCard, Landmark, Layers, Printer, User as UserIcon, ChefHat, Beer, LogOut, Download, Pencil, Image, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -53,6 +26,39 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api, getApiBaseUrl } from '@/lib/api';
+
+// Helper to format numbers with commas (e.g., 1,000,000.00)
+const formatAmount = (num) => {
+  const n = Number(num);
+  if (Number.isNaN(n)) return '0.00';
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+// Normalize prices payload from backend into a simple { [productId]: number } map
+function normalizePricesMap(prices) {
+  const out = {};
+  try {
+    if (!prices) return out;
+    if (Array.isArray(prices)) {
+      for (const row of prices) {
+        const pid = String(row?.productId ?? row?.id ?? row?.product?.id ?? '');
+        if (!pid) continue;
+        const val = Number(row?.price ?? row?.amount ?? row?.value);
+        out[pid] = Number.isFinite(val) ? val : 0;
+      }
+      return out;
+    }
+    if (typeof prices === 'object') {
+      for (const [k, v] of Object.entries(prices)) {
+        const key = String(k);
+        const val = Number(v);
+        out[key] = Number.isFinite(val) ? val : 0;
+      }
+      return out;
+    }
+  } catch {}
+  return out;
+}
 
 // Lightweight theme applier using CSS variables; supports at least 5 themes
 function applyTheme(name) {
@@ -112,10 +118,10 @@ function fmt(v) {
     if (code) {
       try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(n); } catch {}
     }
-    return `${sym ? sym + ' ' : ''}${n.toFixed(2)}`;
+    return `${sym ? sym + ' ' : ''}${formatAmount(n)}`;
   } catch {
     const n = Number(v);
-    return Number.isFinite(n) ? n.toFixed(2) : '0.00';
+    return Number.isFinite(n) ? formatAmount(n) : '0.00';
   }
 }
 
@@ -161,6 +167,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [userPermissions, setUserPermissions] = useState([]);
   const [serviceStaffList, setServiceStaffList] = useState([]);
   const [selectedStaff, setSelectedStaff] = useState(null);
+  const [autoSelectLoggedInAsServiceStaff, setAutoSelectLoggedInAsServiceStaff] = useState(false);
   const [isServicePinModalOpen, setServicePinModalOpen] = useState(false);
   const [pendingStaffId, setPendingStaffId] = useState(null);
   const [protectedActions, setProtectedActions] = useState(['decrement', 'void', 'delete_draft', 'approve_credit_sale']);
@@ -169,10 +176,22 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [pendingOverride, setPendingOverride] = useState(null); // { type, payload, onApproved }
   const [pendingCreditSale, setPendingCreditSale] = useState(null);
   const addingLockRef = useRef(new Set());
+  const refreshTimerRef = useRef(null);
 
   // Optimistic stock: schedule a debounced refresh so backend snapshot does not clobber UI instantly
+  // Uses a ref to cancel any pending refresh before scheduling a new one (true debounce)
   const scheduleRefreshPricingAndStock = (delayMs = 700) => {
-    try { setTimeout(() => { try { refreshPricingAndStock(); } catch {} }, Math.max(0, Number(delayMs) || 0)); } catch {}
+    try {
+      // Cancel any pending refresh to avoid overlapping fetches causing flicker
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        try { refreshPricingAndStock(); } catch {}
+      }, Math.max(0, Number(delayMs) || 0));
+    } catch {}
   };
 
   // Optimistically mutate per-section stockLevels for a given product
@@ -250,10 +269,27 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           if (typeof s.taxRate === 'number' && !Number.isNaN(s.taxRate)) {
             setTaxRate(Number(s.taxRate));
           }
+          // Apply auto-select logged-in user as service staff setting
+          if (typeof s.autoSelectLoggedInAsServiceStaff === 'boolean') {
+            setAutoSelectLoggedInAsServiceStaff(s.autoSelectLoggedInAsServiceStaff);
+          }
         }
       } catch {}
     })();
   }, [user?.branchId]);
+
+  // Auto-select logged-in user as service staff if setting is enabled and user is in the list
+  useEffect(() => {
+    if (!autoSelectLoggedInAsServiceStaff) return;
+    if (!user?.id) return;
+    if (serviceStaffList.length === 0) return;
+    // Check if logged-in user is in the service staff list
+    const match = serviceStaffList.find(s => String(s.id) === String(user.id));
+    if (match && !selectedStaff) {
+      setSelectedStaff(match.id);
+      try { console.debug('[POS] Auto-selected logged-in user as service staff:', match.username); } catch {}
+    }
+  }, [autoSelectLoggedInAsServiceStaff, user?.id, serviceStaffList, selectedStaff]);
 
   // Disable localStorage persistence for drafts; backend is source of truth
 
@@ -962,12 +998,10 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
                 delta: +Number(it.qty || 0),
                 reason: `RESV|${reservationKey}|RELEASE`,
               });
-              // Optimistically restore local stock so badges update immediately
-              adjustLocalSectionStock(it.id, +Number(it.qty || 0));
             } catch {}
           }
-          // Also trigger a debounced backend refresh so UI stays in sync
-          try { scheduleRefreshPricingAndStock(500); } catch {}
+          // Refresh from backend to get authoritative stock counts
+          try { scheduleRefreshPricingAndStock(100); } catch {}
         })();
       } catch {}
       if (editingDraft && editingDraft.table) {
@@ -1137,8 +1171,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       if (existingCartItem) return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
       return [...prev, { ...product, qty: 1, price: product.price, station: product.station }];
     });
-    // Refresh from backend (debounced) to get authoritative counts without clobbering optimistic UI
-    scheduleRefreshPricingAndStock(700);
+    // Refresh from backend to get authoritative stock counts
+    scheduleRefreshPricingAndStock(100);
   };
 
   const withinGrace = () => {
@@ -1183,11 +1217,23 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     }
   };
 
-  const handleOverrideConfirm = async (pin) => {
+  const handleOverrideConfirm = async (data) => {
     try {
+      // data can be { userId, pin } from OverridePinModal or just a string pin (legacy)
+      const userId = data?.userId;
+      const pin = data?.pin || data;
       const sec = (branchSections || []).find(s => s.id === currentSection);
       const resolvedBranchId = user?.branchId || user?.branch?.id || sec?.branchId || undefined;
-      const res = await api.hrm.overridePin.verify({ branchId: resolvedBranchId, pin });
+      
+      let res;
+      if (userId) {
+        // Per-user override PIN verification
+        res = await api.hrm.overridePin.verifyUser({ userId, branchId: resolvedBranchId, pin });
+      } else {
+        // Legacy: global branch override PIN
+        res = await api.hrm.overridePin.verify({ branchId: resolvedBranchId, pin });
+      }
+      
       if (!res || res.ok !== true) {
         throw new Error('Invalid PIN');
       }
@@ -1195,20 +1241,51 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       setOverrideOpen(false);
       setPendingOverride(null);
       setLastOverrideAt(Date.now());
-      setLastOverrideBy(user?.id || null);
+      setLastOverrideBy(userId || user?.id || null);
       if (typeof res.graceSeconds === 'number') setGraceSeconds(res.graceSeconds);
-      // Audit log
+      // Success toast with authorizer name - use userName passed from modal, fallback to service staff list
+      const authorizerName = data?.userName || serviceStaffList.find(s => s.id === userId)?.username || user?.username || '';
+      const staffName = serviceStaffList.find(s => s.id === selectedStaff)?.username || user?.username || '';
+      // Get item details for the action if applicable
+      const itemId = action?.payload?.itemId;
+      const item = itemId ? cart.find(ci => ci.id === itemId) : null;
+      // Log sale event linked to the order for Activities display
+      const orderId = editingDraft?.orderId;
+      if (orderId) {
+        try {
+          await api.orders.logEvent(orderId, {
+            action: `override:${action?.type || 'unknown'}`,
+            meta: { 
+              staffId: selectedStaff, 
+              staffName,
+              authorizerId: userId, 
+              authorizerName,
+              itemId: itemId || null,
+              itemName: item?.name || null,
+              deltaQty: action?.type === 'decrement' ? 1 : (item?.qty || null),
+              actionType: action?.type || 'unknown',
+            }
+          });
+        } catch {}
+      }
+      // Also log to general audit for backup
       try {
         await api.audit.log({
           action: `override:${action?.type || 'unknown'}`,
           userId: user?.id,
           branchId: user?.branchId,
-          meta: { staffId: selectedStaff, time: new Date().toISOString(), payload: action?.payload }
+          meta: { 
+            staffId: selectedStaff, 
+            staffName,
+            authorizerId: userId, 
+            authorizerName,
+            orderId,
+            time: new Date().toISOString(), 
+            payload: action?.payload 
+          }
         });
       } catch {}
-      // Success toast with staff/time
-      const staffName = serviceStaffList.find(s => s.id === selectedStaff)?.username || user?.username || '';
-      toast({ title: 'Override confirmed', description: `Override confirmed for ${staffName} at ${new Date().toLocaleString()}.` });
+      toast({ title: 'Override confirmed', description: `Authorized by ${authorizerName} at ${new Date().toLocaleString()}.` });
       action?.onApproved?.();
     } catch (e) {
       toast({ title: 'Invalid override PIN. Action denied.', variant: 'destructive' });
@@ -1220,16 +1297,16 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       return requireOverride('decrement', { itemId: id }, async () => {
         const item = cart.find(ci => ci.id === id);
         if (!item) return;
-        // Backend-first restore to avoid double increments
+        // Backend-first restore
         try {
           await api.inventory.adjustInSection({ productId: id, sectionId: currentSection, delta: +1, reason: `RESV|${reservationKey}` });
         } catch (e) {
           toast({ title: 'Stock restore failed', description: String(e?.message || 'Could not restore stock.'), variant: 'destructive' });
           return;
         }
-        try { adjustLocalSectionStock(id, +1); } catch {}
         setCart(cart.map(ci => ci.id === id ? { ...ci, qty: Math.max(0, ci.qty - 1) } : ci).filter(ci => ci.qty > 0));
-        scheduleRefreshPricingAndStock(300);
+        // Refresh from backend to get authoritative stock counts
+        scheduleRefreshPricingAndStock(100);
       });
     }
 
@@ -1249,9 +1326,9 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       toast({ title: 'Stock not reserved', description: String(e?.message || 'Failed to reserve stock.'), variant: 'destructive' });
       return;
     }
-    try { adjustLocalSectionStock(id, -1); } catch {}
     setCart(cart.map(item => item.id === id ? { ...item, qty: Math.max(0, item.qty + delta) } : item).filter(item => item.qty > 0));
-    scheduleRefreshPricingAndStock(300);
+    // Refresh from backend to get authoritative stock counts
+    scheduleRefreshPricingAndStock(100);
   };
 
   // Set quantity directly (used by editable input in the cart)
@@ -1274,10 +1351,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       try {
         if (delta > 0) {
           await api.inventory.adjustInSection({ productId: id, sectionId: currentSection, delta: -delta, reason: `RESV|${reservationKey}` });
-          try { adjustLocalSectionStock(id, -delta); } catch {}
         } else if (delta < 0) {
           await api.inventory.adjustInSection({ productId: id, sectionId: currentSection, delta: +(-delta), reason: `RESV|${reservationKey}` });
-          try { adjustLocalSectionStock(id, +(-delta)); } catch {}
         }
       } catch (e) {
         toast({ title: 'Quantity update failed', description: String(e?.message || e), variant: 'destructive' });
@@ -1295,7 +1370,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         }
         return prev;
       });
-      scheduleRefreshPricingAndStock(300);
+      // Refresh from backend to get authoritative stock counts
+      scheduleRefreshPricingAndStock(100);
     } catch {}
   };
 
@@ -1304,16 +1380,16 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       const item = cart.find(ci => ci.id === id);
       if (!item) return;
       const qty = Number(item.qty || 0);
-      // Backend-first restore to avoid double increments
+      // Backend-first restore
       try {
         await api.inventory.adjustInSection({ productId: id, sectionId: currentSection, delta: +qty, reason: `RESV|${reservationKey}` });
       } catch (e) {
         toast({ title: 'Stock restore failed', description: String(e?.message || 'Could not restore stock.'), variant: 'destructive' });
         return;
       }
-      try { adjustLocalSectionStock(id, +qty); } catch {}
       setCart(cart.filter(ci => ci.id !== id));
-      scheduleRefreshPricingAndStock(300);
+      // Refresh from backend to get authoritative stock counts
+      scheduleRefreshPricingAndStock(100);
     });
   }
 
@@ -1373,7 +1449,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           branchId: (user?.branchId || user?.branch?.id || (branchSections.find(s => s.id === currentSection)?.branchId) || undefined),
           sectionId: currentSection,
           tableId: resolvedDraftTable?.id || editingDraft?.table?.id || editingDraft?.tableId,
-
+          // Pass orderId from existing draft to maintain order continuity
+          orderId: editingDraft?.orderId || undefined,
           name: nameToUse,
           serviceType: currentService,
           waiterId: selectedStaff || undefined,
@@ -1385,6 +1462,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           tax: Number(tax),
           total: Number(total),
           status: 'ACTIVE',
+          reservationKey,
         };
         if (backendId) {
           await api.drafts.update(backendId, payload);
@@ -1452,6 +1530,9 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             total: Number(fresh.total || next.total || 0),
             isSuspended: String(fresh.status || next.status || '').toUpperCase() === 'SUSPENDED',
             waiterId: fresh.waiterId || next.waiterId,
+            // Preserve orderId from backend to maintain order continuity
+            orderId: fresh.orderId || next.orderId,
+            reservationKey: fresh.reservationKey || next.reservationKey,
           };
         }
       }
@@ -1602,6 +1683,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             allowOverselling,
             tableId: draftTable?.id || editingDraft?.table?.id || editingDraft?.tableId,
             status: 'SUSPENDED',
+            orderId: editingDraft?.orderId || undefined,
           });
         } catch (e) {
           const msg = e?.message || e;
@@ -1678,7 +1760,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           } else {
             // Legacy fallback: create + mark paid
             const isSplit = String(paymentDetails?.method || '').toLowerCase() === 'multiple';
-            createdOrder = await api.orders.create({ branchId: user.branchId, sectionId: currentSection, items: cart.map(ci => ({ productId: ci.id, qty: String(ci.qty), price: String(ci.price ?? 0) })), payment: isSplit ? undefined : { method: String(paymentDetails?.method || paymentMode), amount: String(total), reference: paymentDetails?.reference || undefined }, allowOverselling, tableId: selectedTable?.id, status: 'ACTIVE', reservationKey, serviceType: currentService, waiterId: selectedStaff || undefined, subtotal: String(subtotal), discount: String(discountValue), tax: String(tax), total: String(total), taxRate: String(taxRate ?? 0) });
+            createdOrder = await api.orders.create({ branchId: user.branchId, sectionId: currentSection, items: cart.map(ci => ({ productId: ci.id, qty: String(ci.qty), price: String(ci.price ?? 0) })), payment: isSplit ? undefined : { method: String(paymentDetails?.method || paymentMode), amount: String(total), reference: paymentDetails?.reference || undefined }, allowOverselling, tableId: selectedTable?.id, status: 'ACTIVE', reservationKey, serviceType: currentService, waiterId: selectedStaff || undefined, subtotal: String(subtotal), discount: String(discountValue), tax: String(tax), total: String(total), taxRate: String(taxRate ?? 0), orderId: editingDraft?.orderId || undefined });
             if (createdOrder?.id && isSplit) {
               const src = paymentDetails || {};
               const details = src.details || {};
@@ -1749,7 +1831,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           try { window.dispatchEvent(new CustomEvent('orders:changed', { detail: { action: 'settled', orderId: editingDraft?.orderId || null } })); } catch {}
         } else {
           const isSplit = String(paymentDetails?.method || '').toLowerCase() === 'multiple';
-          createdOrder = await api.orders.create({ branchId: user.branchId, sectionId: currentSection, items: cart.map(ci => ({ productId: ci.id, qty: String(ci.qty), price: String(ci.price ?? 0) })), payment: isSplit ? undefined : { method: String(paymentDetails?.method || paymentMode), amount: String(total), reference: paymentDetails?.reference || undefined }, allowOverselling, tableId: selectedTable?.id, status: 'ACTIVE', serviceType: currentService, waiterId: selectedStaff || undefined, subtotal: String(subtotal), discount: String(discountValue), tax: String(tax), total: String(total), taxRate: String(taxRate ?? 0) });
+          createdOrder = await api.orders.create({ branchId: user.branchId, sectionId: currentSection, items: cart.map(ci => ({ productId: ci.id, qty: String(ci.qty), price: String(ci.price ?? 0) })), payment: isSplit ? undefined : { method: String(paymentDetails?.method || paymentMode), amount: String(total), reference: paymentDetails?.reference || undefined }, allowOverselling, tableId: selectedTable?.id, status: 'ACTIVE', serviceType: currentService, waiterId: selectedStaff || undefined, subtotal: String(subtotal), discount: String(discountValue), tax: String(tax), total: String(total), taxRate: String(taxRate ?? 0), orderId: editingDraft?.orderId || undefined, reservationKey });
           if (createdOrder?.id && isSplit) {
             const src = paymentDetails || {};
             const details = src.details || {};
@@ -1986,6 +2068,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           onConfirm={handleOverrideConfirm}
           title="Global Override Required"
           description="Enter Global Override PIN to confirm this action."
+          branchId={user?.branchId}
         />
         <ServiceStaffPinModal
           open={isServicePinModalOpen}
@@ -2697,7 +2780,7 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
         <div key={item.id} className="flex items-center bg-background p-2 rounded-lg">
           <div className="flex-1">
             <p className="font-medium">{item.name}</p>
-            <p className="text-sm text-muted-foreground">{currencySymbol}{(item.price || 0).toFixed(2)}</p>
+            <p className="text-sm text-muted-foreground">{currencySymbol}{formatAmount(item.price || 0)}</p>
           </div>
           <div className="flex items-center gap-2">
             <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onUpdateQty(item.id, -1)}><Minus className="w-4 h-4" /></Button>
@@ -2713,7 +2796,7 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
             />
             <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onUpdateQty(item.id, 1)}><Plus className="w-4 h-4" /></Button>
           </div>
-          <p className="w-20 text-right font-semibold">{currencySymbol}{((item.price || 0) * item.qty).toFixed(2)}</p>
+          <p className="w-24 text-right font-semibold">{currencySymbol}{formatAmount((item.price || 0) * item.qty)}</p>
           <div className="flex items-center ml-1">
             <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground" onClick={() => onPrintItem(item)}><Printer className="w-4 h-4" /></Button>
             <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => onVoid(item.id)}><X className="w-4 h-4" /></Button>
@@ -2723,7 +2806,7 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
     </div>
     <div className="p-2 border-t space-y-2 bg-background/50">
       <div className="space-y-0.5 text-xs">
-        <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{currencySymbol}{subtotal.toFixed(2)}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{currencySymbol}{formatAmount(subtotal)}</span></div>
         <div className="flex justify-between items-center">
           <div className="flex items-center">
             <span className="text-muted-foreground">Discount</span>
@@ -2731,7 +2814,7 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
               <Pencil className="h-3 w-3" />
             </Button>
           </div>
-          <span className="text-destructive">-{currencySymbol}{discountValue.toFixed(2)}</span>
+          <span className="text-destructive">-{currencySymbol}{formatAmount(discountValue)}</span>
         </div>
         <div className="flex justify-between items-center">
           <div className="flex items-center">
@@ -2740,9 +2823,9 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
               <Pencil className="h-3 w-3" />
             </Button>
           </div>
-          <span>{currencySymbol}{tax.toFixed(2)}</span>
+          <span>{currencySymbol}{formatAmount(tax)}</span>
         </div>
-        <div className="flex justify-between font-bold text-base"><span className="text-foreground">Total</span><span>{currencySymbol}{total.toFixed(2)}</span></div>
+        <div className="flex justify-between font-bold text-base"><span className="text-foreground">Total</span><span>{currencySymbol}{formatAmount(total)}</span></div>
       </div>
       <div className="flex gap-1">
         <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs" onClick={onClearCart}><Trash2 className="w-3 h-3 mr-1"/> Clear</Button>

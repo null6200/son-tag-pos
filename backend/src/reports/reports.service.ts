@@ -79,13 +79,12 @@ export class ReportsService {
         return row;
       });
 
-    // Outstanding per order (Invoice Due): include SUSPENDED and PENDING_PAYMENT
+    // Outstanding per order (Invoice Due): include ONLY SUSPENDED and PENDING_PAYMENT
     // Compute outstanding = total - sum(all payments for that order)
     const creditOrders = await this.prisma.order.findMany({
       where: {
         ...(params.branchId ? { branchId: params.branchId } : {}),
-        // Consider all non-terminal orders; we'll include only those with unpaid balance
-        status: { notIn: ['PAID', 'CANCELLED', 'VOIDED', 'REFUNDED'] as any },
+        status: { in: ['PENDING_PAYMENT', 'SUSPENDED'] as any },
       },
       select: {
         id: true,
@@ -94,8 +93,11 @@ export class ReportsService {
         subtotal: true,
         tax: true,
         discount: true,
+        // Only consider SUSPENDED drafts when deriving totals for credit orders.
+        // Plain DRAFT updates must not influence Invoice Due until suspended or marked pending.
         drafts: {
-          select: { total: true, subtotal: true, tax: true, discount: true, createdAt: true },
+          where: { status: 'SUSPENDED' as any },
+          select: { total: true, subtotal: true, tax: true, discount: true, createdAt: true, status: true },
           orderBy: { createdAt: 'desc' as const },
           take: 1,
         },
@@ -109,37 +111,11 @@ export class ReportsService {
     const paidByOrder = new Map<string, number>();
     for (const p of creditPayments) paidByOrder.set(p.orderId, (paidByOrder.get(p.orderId) || 0) + parseFloat(String(p.amount ?? 0)));
     let invoiceDue = 0;
-    const countedOrders = new Set<string>();
 
-    // 1) Primary: sum SUSPENDED drafts that are still credit (or no linked order)
-    try {
-      const extraDrafts = await this.prisma.draft.findMany({
-        where: { status: 'SUSPENDED', ...(params.branchId ? { branchId: params.branchId } : {}) },
-        select: { total: true, subtotal: true, tax: true, discount: true, orderId: true, order: { select: { id: true, status: true } } },
-      } as any);
-      if (Array.isArray(extraDrafts) && extraDrafts.length) {
-        for (const d of extraDrafts) {
-          const linkedId = String((d as any).orderId || (d as any).order?.id || '') || null;
-          const linkedStatus = String((d as any).order?.status || '').toUpperCase();
-          const isCreditStatus = (
-            linkedStatus === 'SUSPENDED' || linkedStatus === 'PENDING_PAYMENT' || linkedStatus === 'ACTIVE' || linkedStatus === 'PENDING' || linkedStatus === 'CREDIT' || linkedStatus === 'DUE'
-          );
-          if (linkedId && !isCreditStatus) continue;
-          const dTotal = parseFloat(String((d as any).total ?? 0));
-          const dSub = parseFloat(String((d as any).subtotal ?? 0));
-          const dTx = parseFloat(String((d as any).tax ?? 0));
-          const dDisc = parseFloat(String((d as any).discount ?? 0));
-          const derived = dSub + dTx - dDisc;
-          const t = dTotal > 0 ? dTotal : (derived > 0 ? derived : 0);
-          if (t > 0) {
-            invoiceDue += t;
-            if (linkedId) countedOrders.add(linkedId);
-          }
-        }
-      }
-    } catch {}
+    // Note: Drafts are excluded from Invoice Due. Only orders with credit statuses
+    // (PENDING_PAYMENT or SUSPENDED) contribute to the KPI.
 
-    // 2) Also include non-terminal orders not represented by drafts (e.g., legacy/other flows)
+    // 2) Also include credit orders not represented by drafts (e.g., legacy/other flows)
     for (const o of creditOrders) {
       const ordTotal = parseFloat(String((o as any).total ?? 0));
       const sub = parseFloat(String((o as any).subtotal ?? 0));
@@ -147,33 +123,16 @@ export class ReportsService {
       const disc = parseFloat(String((o as any).discount ?? 0));
       const derived = sub + tx - disc;
 
-      const latestDraft = ((o as any).drafts && (o as any).drafts[0]) ? (o as any).drafts[0] : undefined;
-      const dSub = parseFloat(String(latestDraft?.subtotal ?? 0));
-      const dTx = parseFloat(String(latestDraft?.tax ?? 0));
-      const dDisc = parseFloat(String(latestDraft?.discount ?? 0));
-      const derivedFromDraft = dSub + dTx - dDisc;
-      const draftTotal = parseFloat(String(latestDraft?.total ?? 0));
-
-      // Prefer totals first (draft.total, order.total). Derived only as fallback since tax may be a rate.
-      const preferDraft = latestDraft != null;
-      const fromDraft = draftTotal > 0 ? draftTotal : (derivedFromDraft > 0 ? derivedFromDraft : 0);
+      // Compute using order financials only (ignore drafts); only credit statuses counted above
       const fromOrder = ordTotal > 0 ? ordTotal : (derived > 0 ? derived : 0);
-      const tot = preferDraft ? (fromDraft || fromOrder) : (fromOrder || fromDraft);
+      const tot = fromOrder;
 
-      // Skip if this order was already counted via its SUSPENDED draft
-      if (countedOrders.has((o as any).id)) continue;
+      // No draft pass; each credit order is evaluated once
 
-      // Include only if unpaid
+      // Include only if there is outstanding balance
       const paid = paidByOrder.get((o as any).id) || 0;
-      if (paid >= Math.max(0, tot)) {
-        continue; // skip fully paid orders
-      }
-
-      // Sum full final totals for credit sales (do not subtract payments)
-      const add = Math.max(0, tot);
-      if (add > 0) {
-        invoiceDue += add;
-      }
+      const outstanding = Math.max(0, tot - paid);
+      if (outstanding > 0) invoiceDue += outstanding;
     }
 
     // Base Net Sales as cash received within the window
@@ -516,6 +475,22 @@ export class ReportsService {
     const where: any = {};
     if (branchId) where.branchId = branchId;
     if (from || to) where.createdAt = dateFilter;
+    // Exclude low-level HTTP request logs (GET/POST/PUT/DELETE/PATCH ...) so that
+    // the Activity Log focuses on business events (Sale Added, Shift Opened, etc.).
+    // This keeps pagination correct because the filter is applied in the DB query.
+    where.AND = [
+      {
+        NOT: {
+          OR: [
+            { action: { startsWith: 'GET ' } },
+            { action: { startsWith: 'POST ' } },
+            { action: { startsWith: 'PUT ' } },
+            { action: { startsWith: 'DELETE ' } },
+            { action: { startsWith: 'PATCH ' } },
+          ],
+        },
+      },
+    ];
 
     const [rows, total] = await Promise.all([
       anyPrisma.auditLog.findMany({
@@ -536,6 +511,17 @@ export class ReportsService {
         })
       : [];
 
+    // Pre-collect override entries so we can merge their note into the matching
+    // business-event row (e.g. "Deleted draft", "Sale Added") instead of
+    // showing a separate "Override Used" row.
+    const overrideEntries: any[] = [];
+    for (const r of rows) {
+      const meta: any = r.meta || {};
+      if (r.action === 'Override Used' && (meta && meta.subjectType === 'Override')) {
+        overrideEntries.push(r);
+      }
+    }
+
     const items = rows.map((r: any) => {
       const u = users.find((x) => x.id === r.userId);
       const userName = u
@@ -543,7 +529,7 @@ export class ReportsService {
         : 'Unknown';
       const meta: any = r.meta || {};
       const subjectType = meta.subjectType || meta.entityType || meta.type || null;
-      const note =
+      let note =
         meta.note ||
         meta.details ||
         meta.description ||
@@ -551,16 +537,100 @@ export class ReportsService {
         meta.reference ||
         null;
 
-      return {
-        id: r.id,
-        date: r.createdAt,
-        userName,
-        action: r.action,
-        subjectType,
-        note,
-        branchId: r.branchId || null,
-      };
-    });
+      // Merge override PIN info into the same row as the corresponding
+      // business event instead of showing a separate Override row.
+      if (r.action === 'Deleted draft') {
+        const matchIdx = overrideEntries.findIndex((o) => {
+          if (!o) return false;
+          if (o.userId !== r.userId) return false;
+          const ometa: any = o.meta || {};
+          // Link primarily by draftId/orderId if available, otherwise by close timestamp.
+          const sharesId =
+            (meta && ometa && meta.draftId && ometa.draftId && String(meta.draftId) === String(ometa.draftId)) ||
+            (meta && ometa && meta.orderId && ometa.orderId && String(meta.orderId) === String(ometa.orderId));
+          const timeDiff = Math.abs(new Date(o.createdAt).getTime() - new Date(r.createdAt).getTime());
+          return sharesId || timeDiff <= 10_000; // within 10s window
+        });
+        if (matchIdx >= 0) {
+          const o = overrideEntries[matchIdx];
+          overrideEntries.splice(matchIdx, 1);
+          const ometa: any = o.meta || {};
+          const overrideNote =
+            ometa.note ||
+            (ometa.overrideOwnerName ? `Authenticated by ${ometa.overrideOwnerName}'s PIN` : null);
+          if (overrideNote) {
+            note = note ? `${note} | ${overrideNote}` : overrideNote;
+          }
+        }
+      }
+
+      // Merge discount override info into the same row as the corresponding
+      // "Sale Added" entry so the Activity Log shows a single line per sale.
+      if (r.action === 'Sale Added') {
+        const matchIdx = overrideEntries.findIndex((o) => {
+          if (!o) return false;
+          const ometa: any = o.meta || {};
+          if (!ometa || ometa.action !== 'APPLIED_DISCOUNT') return false;
+          // Match by orderId when possible, otherwise fall back to a small time window.
+          const sharesOrder =
+            (meta && ometa && meta.orderId && ometa.orderId && String(meta.orderId) === String(ometa.orderId));
+          const timeDiff = Math.abs(new Date(o.createdAt).getTime() - new Date(r.createdAt).getTime());
+          return sharesOrder || timeDiff <= 10_000; // within 10s window
+        });
+        if (matchIdx >= 0) {
+          const o = overrideEntries[matchIdx];
+          overrideEntries.splice(matchIdx, 1);
+          const ometa: any = o.meta || {};
+          const overrideNote =
+            ometa.note ||
+            (ometa.overrideOwnerName ? `Authenticated by ${ometa.overrideOwnerName}'s PIN for discount` : null);
+          if (overrideNote) {
+            note = note ? `${note} | ${overrideNote}` : overrideNote;
+          }
+        }
+      }
+
+      // Build a richer, user-friendly note for key business events.
+      // Example for sales: "Invoice: INV-00123 | Status: PAID | Total: ₦12,000.00".
+      const invoiceNo = meta.invoiceNo || meta.invoice || null;
+      const status = meta.status || null;
+      const totalRaw = typeof meta.total !== 'undefined' ? Number(meta.total) : NaN;
+      if (!note && (invoiceNo || status || !isNaN(totalRaw))) {
+        const parts: string[] = [];
+        if (invoiceNo) parts.push(`Invoice: ${invoiceNo}`);
+        if (status) parts.push(`Status: ${String(status).toUpperCase()}`);
+        if (!isNaN(totalRaw)) {
+          try {
+            const formatted = totalRaw.toLocaleString('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 2 });
+            parts.push(`Total: ${formatted}`);
+          } catch {
+            parts.push(`Total: ${totalRaw}`);
+          }
+        }
+        if (parts.length) note = parts.join(' | ');
+      }
+
+        // Hide standalone override rows used only for enriching business events
+        // (Deleted draft, Sale Added, etc.) so the Activity Log shows a single
+        // merged row per business event.
+        if (r.action === 'Override Used') {
+          const m: any = (r.meta || {});
+          if (m && m.subjectType === 'Override') {
+            return null;
+          }
+        }
+
+        return {
+          id: r.id,
+          date: r.createdAt,
+          userName,
+          action: r.action,
+          subjectType,
+          note,
+          branchId: r.branchId || null,
+        };
+      })
+      .filter((x: any) => !!x);
 
     return { items, total };
   }

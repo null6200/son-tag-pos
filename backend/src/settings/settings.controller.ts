@@ -26,8 +26,7 @@ export class SettingsController {
     return this.svc.get(branchId);
   }
 
-  @UseGuards(PermissionsGuard)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Put()
   @Permissions('edit_settings')
   set(@Body() dto: any, @Req() req: Request) {
@@ -38,8 +37,7 @@ export class SettingsController {
   }
 
   // Upload logo file and return a URL that this backend can serve
-  @UseGuards(PermissionsGuard)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Post('logo')
   @Permissions('edit_settings')
   @UseInterceptors(FileInterceptor('file', {

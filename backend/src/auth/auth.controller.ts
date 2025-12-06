@@ -137,10 +137,10 @@ export class AuthController {
 function setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
   const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
   const common = { httpOnly: true, secure: isProd, sameSite: (isProd ? 'none' : 'lax'), path: '/' } as any;
-  // Access: 30 minutes
-  res.cookie('access_token', accessToken, { ...common, maxAge: 30 * 60 * 1000 });
-  // Refresh: 7 days
-  res.cookie('refresh_token', refreshToken, { ...common, maxAge: 7 * 24 * 60 * 60 * 1000 });
+  // Access: 2 hours (matches ACCESS_TTL_SECONDS default)
+  res.cookie('access_token', accessToken, { ...common, maxAge: 2 * 60 * 60 * 1000 });
+  // Refresh: 1 day (strict)
+  res.cookie('refresh_token', refreshToken, { ...common, maxAge: 1 * 24 * 60 * 60 * 1000 });
 }
 
 function clearAuthCookies(res: Response) {

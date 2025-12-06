@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Shield, ShieldPlus, Edit, Trash2, CheckSquare, Square, DollarSign, Book, KeyRound, Clock, Calendar, FileText } from 'lucide-react';
+import { Shield, ShieldPlus, Edit, Trash2, CheckSquare, Square, DollarSign, Book, KeyRound, Clock, Calendar, FileText, MoreVertical, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
@@ -18,6 +18,7 @@ import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
 import PermissionList from '@/components/permissions/PermissionList';
 import PermissionGroup from '@/components/permissions/PermissionGroup';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 // Legacy coarse permissions removed to prevent duplication; granular groups below are the source of truth
 const allPermissions = [];
@@ -29,6 +30,11 @@ const RolesAndPermissions = ({ user }) => {
   const [showArchived, setShowArchived] = useState(false);
   const [branches, setBranches] = useState([]);
   const [currentBranchId, setCurrentBranchId] = useState('');
+  const [viewingRole, setViewingRole] = useState(null);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [deleteConfirm, setDeleteConfirm] = useState({ open: false, role: null });
 
   // Load branches and derive current branch id
   useEffect(() => {
@@ -105,7 +111,7 @@ const RolesAndPermissions = ({ user }) => {
       toast({ title: 'Save failed', description: String(e?.message || e), variant: 'destructive' });
     }
   };
-  
+
   const getRoleColor = (roleName) => {
     const colors = {
       'Manager': 'from-red-500 to-orange-500',
@@ -116,6 +122,18 @@ const RolesAndPermissions = ({ user }) => {
     };
     return colors[roleName] || 'from-slate-500 to-slate-600';
   };
+
+  const filteredRoles = (roles || [])
+    .filter(r => (showArchived ? true : !r.archived))
+    .filter(r => !search || String(r.name || '').toLowerCase().includes(String(search).toLowerCase()));
+
+  const total = filteredRoles.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clamped = Math.min(page, totalPages);
+  const startIdx = (clamped - 1) * pageSize;
+  const pageRoles = filteredRoles.slice(startIdx, startIdx + pageSize);
+
+  useEffect(() => { setPage(1); }, [search, showArchived, currentBranchId]);
 
   return (
     <div className="space-y-6">
@@ -135,48 +153,97 @@ const RolesAndPermissions = ({ user }) => {
             <Label htmlFor="show-archived-roles">Show Archived</Label>
             <Switch id="show-archived-roles" checked={showArchived} onCheckedChange={setShowArchived} />
           </div>
+          <div className="hidden md:block">
+            <Input placeholder="Search roles..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-9 w-[16rem]" />
+          </div>
           <Button onClick={handleAddRole} className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 gap-2">
             <ShieldPlus className="w-4 h-4" />
             Add Role
           </Button>
         </div>
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {roles.filter(r => showArchived ? true : !r.archived).map((role, index) => (
-          <motion.div
-            key={role.id}
-            whileHover={{ scale: 1.02 }}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.05 }}
-          >
-            <Card className="glass-effect border-2 border-white/30 flex flex-col h-full">
-              <CardHeader>
-                <div className="flex items-center gap-4">
-                   <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${getRoleColor(role.name)} flex items-center justify-center shadow-lg`}>
-                    <Shield className="w-7 h-7 text-white" />
-                  </div>
-                  <CardTitle className="text-xl">{role.name}</CardTitle>
+      <div className="border rounded-md overflow-hidden">
+        <div className="px-3 py-2 flex items-center justify-between text-sm bg-muted/30 border-b">
+          <div className="flex items-center gap-2">
+            <span>Show</span>
+            <select className="h-8 rounded-md border bg-background px-2" value={pageSize} onChange={(e) => { setPage(1); setPageSize(Number(e.target.value) || 10); }}>
+              {[5,10,20,50].map(n => (<option key={n} value={n}>{n}</option>))}
+            </select>
+            <span>entries</span>
+          </div>
+          <div className="md:hidden">
+            <Input placeholder="Search roles..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 w-[12rem]" />
+          </div>
+        </div>
+        <div className="grid grid-cols-12 bg-muted/50 text-sm font-semibold px-3 py-2">
+          <div className="col-span-8">Role</div>
+          <div className="col-span-4 text-right">Actions</div>
+        </div>
+        <div className="divide-y">
+          {pageRoles.map((role, index) => (
+            <motion.div
+              key={role.id}
+              whileHover={{ scale: 1.005 }}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.02 }}
+              className="grid grid-cols-12 px-3 py-2 items-center"
+            >
+              <div className="col-span-8 flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${getRoleColor(role.name)} flex items-center justify-center`}>
+                  <Shield className="w-4 h-4 text-white" />
                 </div>
-              </CardHeader>
-              <CardContent className="flex-1 flex flex-col justify-between">
-                <div>
-                  <h4 className="text-sm font-semibold text-gray-600 mb-2">Permissions:</h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(role.permissions || []).map(p => <span key={p} className="text-xs bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full">{allPermissions.find(ap => ap.id === p)?.name || p}</span>)}
-                  </div>
-                </div>
-                <div className="flex gap-2 pt-4 mt-4">
-                  <Button onClick={() => handleEditRole(role)} variant="outline" size="sm" className="flex-1"><Edit className="w-3 h-3 mr-1.5" />Edit</Button>
-                  <Button onClick={() => handleDeleteRole(role.id)} variant="destructive" size="sm" className="flex-1"><Trash2 className="w-3 h-3 mr-1.5" />Delete</Button>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ))}
+                <div className="font-medium">{role.name}{role.archived ? ' (Archived)' : ''}</div>
+              </div>
+              <div className="col-span-4 flex justify-end">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="w-4 h-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onClick={() => setViewingRole(role)}>View</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleEditRole(role)}>Edit</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setDeleteConfirm({ open: true, role })} className="text-destructive">Delete</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </motion.div>
+          ))}
+          {filteredRoles.length === 0 && (
+            <div className="px-3 py-6 text-sm text-muted-foreground">No roles found.</div>
+          )}
+        </div>
+        <div className="flex flex-col items-center gap-3 p-3">
+          <div className="text-sm text-muted-foreground">{total === 0 ? '0' : `${Math.min(total, startIdx + 1)}-${Math.min(total, startIdx + pageSize)}`} of {total}</div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={clamped <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</Button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: totalPages }).slice(0, 5).map((_, idx) => {
+                const pg = idx + 1;
+                const active = pg === clamped;
+                return (
+                  <Button key={pg} variant={active ? 'default' : 'outline'} size="sm" onClick={() => setPage(pg)}>{pg}</Button>
+                );
+              })}
+            </div>
+            <Button variant="outline" size="sm" disabled={clamped >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</Button>
+          </div>
+        </div>
       </div>
       <RoleFormModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveRole} role={editingRole} />
+      <RoleViewModal isOpen={!!viewingRole} onClose={() => setViewingRole(null)} role={viewingRole} />
+      <Dialog open={deleteConfirm.open} onOpenChange={(v) => setDeleteConfirm(prev => ({ ...prev, open: v, role: v ? prev.role : null }))}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Role</DialogTitle>
+            <DialogDescription>Are you sure you want to delete the role "{deleteConfirm.role?.name}"?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteConfirm({ open: false, role: null })}>Cancel</Button>
+            <Button variant="destructive" onClick={async () => { if (deleteConfirm.role?.id) { await handleDeleteRole(deleteConfirm.role.id); } setDeleteConfirm({ open: false, role: null }); }}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -405,10 +472,10 @@ const RoleFormModal = ({ isOpen, onClose, onSave, role }) => {
       setSelectedPermissions([]);
     }
   }, [role, isOpen]);
-  
+
   const handlePermissionToggle = (permissionId) => {
-    setSelectedPermissions(prev => 
-      prev.includes(permissionId) 
+    setSelectedPermissions(prev =>
+      prev.includes(permissionId)
       ? prev.filter(p => p !== permissionId)
       : [...prev, permissionId]
     );
@@ -424,7 +491,7 @@ const RoleFormModal = ({ isOpen, onClose, onSave, role }) => {
     const perms = selectedPermissions.includes('all') ? ['all'] : selectedPermissions;
     onSave({ name, permissions: perms });
   };
-  
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-[480px]">
@@ -641,6 +708,37 @@ const RoleFormModal = ({ isOpen, onClose, onSave, role }) => {
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit}>Save Role</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const RoleViewModal = ({ isOpen, onClose, role }) => {
+  if (!role) return null;
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>View Role</DialogTitle>
+          <DialogDescription>View the details of this role.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-gray-400 hover:scrollbar-thumb-gray-500 scrollbar-track-transparent">
+          <div className="space-y-2">
+            <Label className="font-semibold">Role name</Label>
+            <div className="text-sm">{role.name}</div>
+          </div>
+          <div className="space-y-2">
+            <Label className="font-semibold">Permissions</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {(role.permissions || []).map(p => (
+                <span key={p} className="text-xs bg-orange-100 text-orange-800 font-semibold px-2 py-0.5 rounded-full">{p}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

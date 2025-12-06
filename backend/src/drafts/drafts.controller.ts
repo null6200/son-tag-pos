@@ -11,7 +11,7 @@ export class DraftsController {
 
   @UseGuards(PermissionsGuard)
   @Get()
-  @Permissions('view_pos_sell')
+  @Permissions('draft_view_all', 'draft_view_own', 'view_drafts_all')
   async list(
     @Query('branchId') branchId: string,
     @Query('sectionId') sectionId?: string,
@@ -34,7 +34,7 @@ export class DraftsController {
 
   @UseGuards(PermissionsGuard)
   @Get(':id')
-  @Permissions('view_pos_sell')
+  @Permissions('draft_view_all', 'draft_view_own', 'view_drafts_all')
   async get(@Param('id') id: string, @Req() req: any) {
     const role: string | undefined = req?.user?.role;
     let userId = req?.user?.userId as string | undefined;
@@ -48,14 +48,15 @@ export class DraftsController {
 
   @UseGuards(PermissionsGuard)
   @Post()
-  @Permissions('view_pos_sell', 'edit_pos_sell', 'add_pos_sell', 'view_drafts_all')
-  async create(@Body() body: any, @Req() _req: any) {
-    return this.drafts.create(body);
+  @Permissions('edit_draft', 'edit_pos_sell', 'add_pos_sell', 'view_drafts_all', 'view_pos_sell')
+  async create(@Body() body: any, @Req() req: any) {
+    const userId = req?.user?.userId as string | undefined;
+    return this.drafts.create(body, userId);
   }
 
   @UseGuards(PermissionsGuard)
   @Put(':id')
-  @Permissions('view_pos_sell', 'edit_pos_sell', 'add_pos_sell', 'view_drafts_all')
+  @Permissions('edit_draft', 'edit_pos_sell', 'add_pos_sell', 'view_drafts_all', 'view_pos_sell')
   async update(@Param('id') id: string, @Body() body: any, @Req() req: any) {
     const role: string | undefined = req?.user?.role;
     let userId = req?.user?.userId as string | undefined;
@@ -69,8 +70,13 @@ export class DraftsController {
 
   @UseGuards(PermissionsGuard)
   @Delete(':id')
-  @Permissions('delete_pos_sell', 'view_drafts_all', 'view_pos_sell', 'add_pos_sell', 'edit_pos_sell')
-  async remove(@Param('id') id: string, @Req() req: any) {
+  @Permissions('delete_draft', 'delete_pos_sell', 'view_drafts_all', 'view_pos_sell', 'add_pos_sell', 'edit_pos_sell')
+  async remove(
+    @Param('id') id: string,
+    @Query('overrideOwnerId') overrideOwnerId: string | undefined,
+    @Query('overridePin') overridePin: string | undefined,
+    @Req() req: any,
+  ) {
     const role: string | undefined = req?.user?.role;
     let userId = req?.user?.userId as string | undefined;
     let perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
@@ -78,6 +84,6 @@ export class DraftsController {
       userId = undefined;
       perms = [...new Set([...(perms || []), 'all'])];
     }
-    return this.drafts.remove(id, userId, perms);
+    return this.drafts.remove(id, userId, perms, overrideOwnerId, overridePin);
   }
 }

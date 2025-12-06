@@ -139,9 +139,9 @@ export class AuthService {
 
   private accessSecret() { return process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'devsecret'; }
   private refreshSecret() { return process.env.JWT_REFRESH_SECRET || (process.env.JWT_SECRET ? `${process.env.JWT_SECRET}_refresh` : 'devsecret_refresh'); }
-  private accessTtlSeconds() { return Number(process.env.ACCESS_TTL_SECONDS || 1800); }
-  private refreshTtlDays() { return Number(process.env.REFRESH_TTL_DAYS || '7'); }
-  private idleTimeoutMinutes() { return Number(process.env.IDLE_TIMEOUT_MINUTES || '60'); }
+  private accessTtlSeconds() { return Number(process.env.ACCESS_TTL_SECONDS || 7200); }
+  // Refresh tokens are valid for a strict 1 day window.
+  private refreshTtlDays() { return 1; }
 
   private async issueTokens(userId: string, username: string, role: string, userAgent?: string, ipAddress?: string) {
     const accessToken = await this.jwt.signAsync({ sub: userId, username, role }, { secret: this.accessSecret(), expiresIn: this.accessTtlSeconds() });
@@ -168,7 +168,6 @@ export class AuthService {
     // Find a matching stored hash (linear scan by user limited to recent, or attempt hash compare over user's active tokens)
     const tokens = await this.prisma.refreshToken.findMany({ where: { userId, revoked: false } });
     const now = new Date();
-    const idleCutoff = new Date(now.getTime() - this.idleTimeoutMinutes() * 60 * 1000);
     let match: any = null;
     for (const t of tokens) {
       const ok = await bcrypt.compare(currentToken, t.tokenHash);
@@ -176,7 +175,6 @@ export class AuthService {
     }
     if (!match) throw new UnauthorizedException('Refresh token not recognized');
     if (match.expiresAt <= now) throw new UnauthorizedException('Refresh token expired');
-    if (new Date(match.lastUsedAt) < idleCutoff) throw new UnauthorizedException('Session idle timeout');
 
     // Revoke current and issue new
     await this.prisma.refreshToken.update({ where: { id: match.id }, data: { revoked: true, lastUsedAt: now } });

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+
 import { motion } from 'framer-motion';
 import { ListOrdered, Clock, CheckCircle, RefreshCw, XCircle, MoreVertical, Eye, Printer, Coins as HandCoins, Undo2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,12 +15,19 @@ import {
 import OrderDetailsModal from '@/components/dashboard/orders/OrderDetailsModal';
 import RefundModal from '@/components/dashboard/orders/RefundModal';
 import PrintView from '@/components/pos/PrintView';
+import OverridePinModal from '@/components/common/OverridePinModal';
+import { api as fullApi } from '@/lib/api';
+
 import { api } from '@/lib/api';
 
 const OrderManagement = ({ user }) => {
   const [orders, setOrders] = useState([]);
   const [viewingOrder, setViewingOrder] = useState(null);
   const [refundingOrder, setRefundingOrder] = useState(null);
+  const [isOverrideOpen, setOverrideOpen] = useState(false);
+  const [pendingOverrideRefund, setPendingOverrideRefund] = useState(null); // { orderId }
+  const [overrideUsers, setOverrideUsers] = useState([]);
+
   const [printData, setPrintData] = useState(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -43,6 +52,28 @@ const OrderManagement = ({ user }) => {
     load();
   }, [user?.branchId, page, pageSize]);
 
+  // Load override-capable users (manager/supervisor/admin/accountant) for refund overrides
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!user?.branchId) { setOverrideUsers([]); return; }
+        const list = await api.users.list({ branchId: user.branchId });
+        const rows = Array.isArray(list) ? list : [];
+        const overrideCandidates = rows.filter(u => {
+          const roleName = (u.appRole && u.appRole.name) || u.role || '';
+          const r = String(roleName).toLowerCase();
+          return r.includes('manager') || r.includes('supervisor') || r.includes('admin') || r.includes('accountant');
+        });
+        setOverrideUsers(overrideCandidates.map(u => ({
+          id: u.id,
+          name: u.username || u.firstName || u.surname || u.email || `user-${u.id}`,
+        })));
+      } catch (_) {
+        setOverrideUsers([]);
+      }
+    })();
+  }, [user?.branchId]);
+
   const refreshOrders = async () => {
     if (!user?.branchId) { setOrders([]); setTotalCount(0); return; }
     const res = await api.orders.list({ branchId: user.branchId, page: 1, pageSize });
@@ -53,14 +84,33 @@ const OrderManagement = ({ user }) => {
     setPage(1);
   };
 
-  const handleConfirmRefund = async (orderId, reason) => {
+  const handleConfirmRefund = (orderId, reason) => {
+    setPendingOverrideRefund({ orderId });
+    setOverrideOpen(true);
+  };
+
+  const handleOverrideConfirm = async ({ userId: overrideOwnerId, pin }) => {
+    const ctx = pendingOverrideRefund;
+    if (!ctx?.orderId || !overrideOwnerId || !pin) {
+      setOverrideOpen(false);
+      setPendingOverrideRefund(null);
+      return;
+    }
     try {
-      await api.orders.refund(orderId);
+      // Verify override PIN via HRM endpoint used in POS
+      const branchId = user?.branchId || user?.branch?.id;
+      if (!branchId) throw new Error('Branch not resolved');
+      await fullApi.hrm.overridePin.verifyUser({ userId: overrideOwnerId, branchId, pin });
+
+      await api.orders.refund(ctx.orderId, { overrideOwnerId });
       await refreshOrders();
       setRefundingOrder(null);
-      toast({ title: 'Refund Processed', description: `Order ${orderId} refunded and stock updated.` });
+      toast({ title: 'Refund Processed', description: `Order ${ctx.orderId} refunded and stock updated.` });
     } catch (e) {
       toast({ title: 'Refund failed', description: String(e?.message || e), variant: 'destructive' });
+    } finally {
+      setOverrideOpen(false);
+      setPendingOverrideRefund(null);
     }
   };
 
@@ -155,7 +205,7 @@ const OrderManagement = ({ user }) => {
                                 <span>Print Receipt</span>
                             </DropdownMenuItem>
                             {(['Paid','PAID'].includes(rawStatus)) && (
-                              <DropdownMenuItem onClick={() => setRefundingOrder(order)} className="text-amber-600 focus:text-amber-600">
+                              <DropdownMenuItem onClick={() => handleConfirmRefund(order.id, 'Refund')} className="text-amber-600 focus:text-amber-600">
                                   <HandCoins className="mr-2 h-4 w-4" />
                                   <span>Process Refund</span>
                               </DropdownMenuItem>
@@ -273,6 +323,15 @@ const OrderManagement = ({ user }) => {
             onConfirm={handleConfirmRefund}
           />
         )}
+
+        <OverridePinModal
+          open={isOverrideOpen}
+          onClose={() => { setOverrideOpen(false); setPendingOverrideRefund(null); }}
+          onConfirm={handleOverrideConfirm}
+          title="Supervisor Override Required"
+          description="Select a supervisor and enter their override PIN to authorize this refund."
+          users={overrideUsers}
+        />
       </div>
     </>
   );

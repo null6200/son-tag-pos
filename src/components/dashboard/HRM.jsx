@@ -204,12 +204,19 @@ const EmployeesManagement = () => {
   const [form, setForm] = useState({ userId: '', jobTitle: '', hourlyRate: '' });
   const [pinInput, setPinInput] = useState({});
 
+  const getBranchId = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem('loungeUser') || 'null');
+      return s?.branchId || s?.branch?.id || '';
+    } catch {
+      return '';
+    }
+  };
+
   const load = async () => {
-    const s = (() => {
-      try { return JSON.parse(localStorage.getItem('loungeUser') || 'null'); } catch { return null; }
-    })();
-    const branchId = s?.branchId || s?.branch?.id || '';
+    const branchId = getBranchId();
     if (!branchId) return;
+
     try {
       setLoading(true);
       const [plist, ulist] = await Promise.all([
@@ -226,7 +233,6 @@ const EmployeesManagement = () => {
   };
 
   useEffect(() => { load(); }, []);
-  useEffect(() => { if (isAssignOpen) load(); }, [isAssignOpen]);
 
   const createProfile = async () => {
     if (!form.userId) {
@@ -234,6 +240,7 @@ const EmployeesManagement = () => {
       return;
     }
     try {
+      const branchId = getBranchId();
       await api.hrm.employees.create({
         userId: form.userId,
         branchId,
@@ -249,26 +256,40 @@ const EmployeesManagement = () => {
     }
   };
 
-  const setPin = async (id, pin) => {
+  const setPin = async (profile, pin) => {
     try {
-      await api.hrm.employees.setPin(id, pin || '');
-      setPinInput(prev => ({ ...prev, [id]: '' }));
-      toast({ title: pin ? 'PIN set' : 'PIN cleared' });
+      const branchId = getBranchId();
+      const userId = profile?.user?.id || profile?.userId;
+      if (!userId || !branchId) {
+        toast({
+          title: 'Missing context',
+          description: 'Branch or user could not be resolved for override PIN.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      await api.hrm.overridePin.setUser({ userId, branchId, pin: pin || '' });
+      setPinInput(prev => ({ ...prev, [profile.id]: '' }));
+      toast({ title: pin ? 'Override PIN set' : 'Override PIN cleared' });
     } catch (e) {
-      toast({ title: 'PIN update failed', description: String(e?.message || e), variant: 'destructive' });
+      toast({
+        title: 'Override PIN update failed',
+        description: String(e?.message || e),
+        variant: 'destructive',
+      });
     }
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-xl font-bold">Employees</h3>
+    <div>
+      <div className="flex items-center gap-4 mb-6">
+        <div className="flex-1">
+          <h2 className="text-3xl font-bold gradient-text">Employees</h2>
           <p className="text-sm text-gray-500">Manage employee profiles</p>
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
-            <Button><UserPlus className="w-4 h-4 mr-2"/>New Profile</Button>
+            <Button><UserPlus className="w-4 h-4 mr-2" />New Profile</Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
@@ -328,8 +349,8 @@ const EmployeesManagement = () => {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Input className="w-[120px]" type="password" placeholder="Set PIN" value={pinInput[p.id] || ''} onChange={e => setPinInput(prev => ({ ...prev, [p.id]: e.target.value }))} />
-                      <Button size="sm" onClick={() => setPin(p.id, pinInput[p.id])}>Set</Button>
-                      <Button size="sm" variant="outline" onClick={() => setPin(p.id, '')}>Clear</Button>
+                      <Button size="sm" onClick={() => setPin(p, pinInput[p.id])}>Set</Button>
+                      <Button size="sm" variant="outline" onClick={() => setPin(p, '')}>Clear</Button>
                     </div>
                   </TableCell>
                 </TableRow>

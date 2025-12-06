@@ -40,4 +40,42 @@ export class OverridePinService {
     const ok = await bcrypt.compare(pin || '', branch.overridePinHash);
     return { ok, graceSeconds: branch.overridePinGraceSeconds ?? 5 };
   }
+
+  // Per-user override PINs -------------------------------------------------
+
+  async setUserPin(userId: string, branchId: string | undefined, pin: string) {
+    if (!userId) throw new BadRequestException('userId required');
+    // If branchId omitted, store a global override PIN for the user (branchId null)
+    const hash = pin ? await bcrypt.hash(pin, 10) : null;
+    if (!hash) {
+      // Clearing PIN: delete any existing record
+      await (this.prisma as any).userOverridePin.deleteMany({ where: { userId, branchId: branchId || null } });
+      return { ok: true, hasPin: false };
+    }
+    const upserted = await (this.prisma as any).userOverridePin.upsert({
+      where: {
+        userId_branchId: {
+          userId,
+          branchId: branchId || null,
+        },
+      },
+      update: { pinHash: hash },
+      create: {
+        userId,
+        branchId: branchId || null,
+        pinHash: hash,
+      },
+    });
+    return { ok: true, hasPin: !!upserted.pinHash };
+  }
+
+  async verifyUserPin(userId: string, branchId: string | undefined, pin: string) {
+    if (!userId) throw new BadRequestException('userId required');
+    // For now, treat override PIN as per-user (global) regardless of branch.
+    // This avoids branchId mismatches causing a correct PIN to fail.
+    const rec = await (this.prisma as any).userOverridePin.findFirst({ where: { userId } });
+    if (!rec?.pinHash) return { ok: false };
+    const ok = await bcrypt.compare(pin || '', rec.pinHash);
+    return { ok };
+  }
 }

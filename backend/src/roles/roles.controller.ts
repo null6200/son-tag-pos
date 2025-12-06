@@ -8,8 +8,9 @@ import { RolesService } from './roles.service';
 export class RolesController {
   constructor(private readonly roles: RolesService) {}
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
   @Get()
+  @Permissions('settings')
   async list(@Query('branchId') branchId: string, @Query('includeArchived') includeArchived?: string) {
     return this.roles.list(branchId, includeArchived === 'true' || includeArchived === '1');
   }

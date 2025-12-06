@@ -7,11 +7,12 @@ import { Undo2, X } from 'lucide-react';
 
 const RefundModal = ({ order, isOpen, onClose, onConfirm }) => {
   const [reason, setReason] = useState('');
+  const [overrideOwnerId, setOverrideOwnerId] = useState('');
 
   if (!order) return null;
 
   const handleConfirm = () => {
-    onConfirm(order.id, reason);
+    onConfirm(order.id, reason, overrideOwnerId);
   };
 
   const invoiceLabel = (() => {

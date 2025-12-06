@@ -50,6 +50,7 @@ let tokenProvider = null;
 export function setAuthProvider(fn) { tokenProvider = typeof fn === 'function' ? fn : null; }
 
 // Activity-aware background refresh to avoid idle timeouts while the user is active
+// Access token is valid for 2 hours; we proactively refresh every 90 minutes to stay ahead
 let __lastActivityAt = Date.now();
 let __lastRefreshAt = 0;
 let __refreshTimer = null;
@@ -67,14 +68,14 @@ try {
           const expired = (() => { try { return window.sessionStorage?.getItem('auth_expired') === '1'; } catch { return false; } })();
           if (expired) return;
           const now = Date.now();
-          // Throttle background refresh to once every 20 minutes while tab is open
-          const shouldRefresh = (now - __lastRefreshAt) > 20 * 60 * 1000;
+          // Proactively refresh every 90 minutes (before 2-hour token expires)
+          const shouldRefresh = (now - __lastRefreshAt) > 90 * 60 * 1000;
           if (!shouldRefresh) return;
           // Best-effort refresh; ignore errors (request() path does robust handling on 401s anyway)
           const res = await fetch(`${BASE_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
           if (res && res.ok) { __lastRefreshAt = now; }
         } catch {}
-      }, 5 * 60 * 1000); // check every 5 minutes
+      }, 10 * 60 * 1000); // check every 10 minutes
     }
   }
 } catch {}
@@ -234,7 +235,13 @@ export const api = {
     get(id) { return request(`/drafts/${encodeURIComponent(id)}`); },
     create(payload) { return request('/drafts', { method: 'POST', body: payload }); },
     update(id, payload) { return request(`/drafts/${encodeURIComponent(id)}`, { method: 'PUT', body: payload }); },
-    remove(id) { return request(`/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
+    remove(id, options = {}) {
+      const params = new URLSearchParams();
+      if (options && options.overrideOwnerId) params.set('overrideOwnerId', String(options.overrideOwnerId));
+      if (options && options.overridePin) params.set('overridePin', String(options.overridePin));
+      const qs = params.toString();
+      return request(`/drafts/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`, { method: 'DELETE' });
+    },
   },
   sectionFunctions: {
     list({ branchId, page, pageSize } = {}) {
@@ -253,6 +260,26 @@ export const api = {
     },
     remove(id) {
       return request(`/section-functions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+  hrm: {
+    overridePin: {
+      get({ branchId } = {}) {
+        const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+        return request(`/hrm/override-pin${q}`);
+      },
+      set({ branchId, pin, graceSeconds } = {}) {
+        return request('/hrm/override-pin/set', { method: 'POST', body: { branchId, pin, graceSeconds } });
+      },
+      verify({ branchId, pin } = {}) {
+        return request('/hrm/override-pin/verify', { method: 'POST', body: { branchId, pin } });
+      },
+      setUser({ userId, branchId, pin } = {}) {
+        return request('/hrm/override-pin/user/set', { method: 'POST', body: { userId, branchId, pin } });
+      },
+      verifyUser({ userId, branchId, pin } = {}) {
+        return request('/hrm/override-pin/user/verify', { method: 'POST', body: { userId, branchId, pin } });
+      },
     },
   },
   productTypes: {
@@ -471,6 +498,13 @@ export const api = {
   auth: {
     ping() {
       return request('/auth/ping', { method: 'POST' });
+    },
+    async logout() {
+      try {
+        await request('/auth/logout', { method: 'POST' });
+      } catch {
+        // Ignore logout errors; client will still clear local state
+      }
     },
   },
   roles: {
@@ -814,7 +848,16 @@ export const api = {
     get(id) {
       return request(`/orders/${encodeURIComponent(id)}`);
     },
-    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId } = {}) {
+    update(id, { subtotal, discount, tax, total, taxRate } = {}) {
+      const body = {};
+      if (subtotal !== undefined) body.subtotal = subtotal;
+      if (discount !== undefined) body.discount = discount;
+      if (tax !== undefined) body.tax = tax;
+      if (total !== undefined) body.total = total;
+      if (taxRate !== undefined) body.taxRate = taxRate;
+      return request(`/orders/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    },
+    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId } = {}) {
       const body = { branchId, items };
       if (sectionId) body.sectionId = sectionId;
       if (!sectionId && sectionName) body.sectionName = sectionName;
@@ -830,19 +873,29 @@ export const api = {
       if (taxRate !== undefined) body.taxRate = taxRate;
       if (serviceType !== undefined) body.serviceType = serviceType;
       if (waiterId !== undefined) body.waiterId = waiterId;
+      if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
       return request('/orders', { method: 'POST', body });
     },
-    updateStatus(id, { status }) {
-      return request(`/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: { status } });
+    updateStatus(id, { status, overrideOwnerId } = {}) {
+      const body = { status };
+      if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
+      return request(`/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', body });
     },
     addPayment(id, { method, amount, reference }) {
       return request(`/orders/${encodeURIComponent(id)}/payments`, { method: 'POST', body: { method, amount, reference } });
     },
-    refund(id) {
-      return request(`/orders/${encodeURIComponent(id)}/refund`, { method: 'POST' });
+    refund(id, { overrideOwnerId } = {}) {
+      const body = {};
+      if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
+      return request(`/orders/${encodeURIComponent(id)}/refund`, { method: 'POST', body });
     },
-    refundItems(id, items) {
-      return request(`/orders/${encodeURIComponent(id)}/refund-items`, { method: 'POST', body: { items } });
+    refundItems(id, items, { overrideOwnerId } = {}) {
+      const body = { items };
+      if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
+      return request(`/orders/${encodeURIComponent(id)}/refund-items`, { method: 'POST', body });
+    },
+    logEvent(id, { action, meta } = {}) {
+      return request(`/orders/${encodeURIComponent(id)}/events`, { method: 'POST', body: { action, meta } });
     },
   },
   prices: {
@@ -932,6 +985,24 @@ export const api = {
     },
   },
   hrm: {
+    overridePin: {
+      get({ branchId } = {}) {
+        const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
+        return request(`/hrm/override-pin${q}`);
+      },
+      set({ branchId, pin, graceSeconds } = {}) {
+        return request('/hrm/override-pin/set', { method: 'POST', body: { branchId, pin, graceSeconds } });
+      },
+      verify({ branchId, pin } = {}) {
+        return request('/hrm/override-pin/verify', { method: 'POST', body: { branchId, pin } });
+      },
+      setUser({ userId, branchId, pin } = {}) {
+        return request('/hrm/override-pin/user/set', { method: 'POST', body: { userId, branchId, pin } });
+      },
+      verifyUser({ userId, branchId, pin } = {}) {
+        return request('/hrm/override-pin/user/verify', { method: 'POST', body: { userId, branchId, pin } });
+      },
+    },
     employees: {
       list({ branchId, q } = {}) {
         const params = new URLSearchParams();
@@ -952,46 +1023,6 @@ export const api = {
     },
     shifts: {
       list({ branchId, from, to, userId } = {}) {
-        const params = new URLSearchParams();
-        if (branchId) params.set('branchId', branchId);
-        if (from) params.set('from', from);
-        if (to) params.set('to', to);
-        if (userId) params.set('userId', userId);
-        const q = params.toString() ? `?${params.toString()}` : '';
-        return request(`/hrm/shifts${q}`);
-      },
-      assign({ userId, branchId, start, end, note } = {}) {
-        return request('/hrm/shifts', { method: 'POST', body: { userId, branchId, start, end, note } });
-      },
-      update(id, data) {
-        return request(`/hrm/shifts/${encodeURIComponent(id)}`, { method: 'PUT', body: data });
-      },
-      remove(id) {
-        return request(`/hrm/shifts/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      },
-    },
-    overridePin: {
-      get({ branchId }) {
-        const q = branchId ? `?branchId=${encodeURIComponent(branchId)}` : '';
-        return request(`/hrm/override-pin${q}`);
-      },
-      set({ branchId, pin, graceSeconds } = {}) {
-        return request('/hrm/override-pin/set', { method: 'POST', body: { branchId, pin, graceSeconds } });
-      },
-      verify({ branchId, pin } = {}) {
-        return request('/hrm/override-pin/verify', { method: 'POST', body: { branchId, pin } });
-      },
-    },
-    leaves: {
-      list({ branchId, status, userId } = {}) {
-        const params = new URLSearchParams();
-        if (branchId) params.set('branchId', branchId);
-        if (status) params.set('status', status);
-        if (userId) params.set('userId', userId);
-        const q = params.toString() ? `?${params.toString()}` : '';
-        return request(`/hrm/leaves${q}`);
-      },
-      create({ userId, branchId, type, startDate, endDate, reason } = {}) {
         return request('/hrm/leaves', { method: 'POST', body: { userId, branchId, type, startDate, endDate, reason } });
       },
       approve(id, approverUserId) {

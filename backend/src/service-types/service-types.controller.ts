@@ -11,7 +11,7 @@ export class ServiceTypesController {
 
   @UseGuards(PermissionsGuard)
   @Get()
-  @Permissions('view_settings', 'view_pos_sell', 'add_pos_sell', 'edit_pos_sell', 'delete_pos_sell')
+  @Permissions('view_settings', 'edit_settings', 'view_pos_sell', 'add_pos_sell', 'edit_pos_sell', 'delete_pos_sell')
   async list(@Query('branchId') branchId: string, @Req() req: any) {
     const effectiveBranchId = branchId ?? req?.user?.branchId;
     if (!effectiveBranchId) throw new BadRequestException('branchId is required');
@@ -20,7 +20,7 @@ export class ServiceTypesController {
 
   @UseGuards(PermissionsGuard)
   @Post()
-  @Permissions('manage_settings')
+  @Permissions('edit_settings')
   async create(@Body() dto: { branchId?: string; name: string; description?: string }, @Req() req: any) {
     const branchId = dto.branchId ?? req?.user?.branchId;
     if (!branchId) throw new BadRequestException('branchId is required');
@@ -29,14 +29,14 @@ export class ServiceTypesController {
 
   @UseGuards(PermissionsGuard)
   @Put(':id')
-  @Permissions('manage_settings')
+  @Permissions('edit_settings')
   async update(@Param('id') id: string, @Body() dto: { name?: string; description?: string; archived?: boolean }, @Req() req: any) {
     return this.svc.update(String(id), dto, req.user?.role);
   }
 
   @UseGuards(PermissionsGuard)
   @Delete(':id')
-  @Permissions('manage_settings')
+  @Permissions('edit_settings')
   async remove(@Param('id') id: string, @Req() req: any) {
     return this.svc.remove(String(id), req.user?.role);
   }

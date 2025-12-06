@@ -29,4 +29,19 @@ export class OverridePinController {
     const fallbackBranchId = req?.user?.branchId ? String(req.user.branchId) : undefined;
     return this.svc.verify(body.branchId || fallbackBranchId, body.pin);
   }
+
+  // Per-user override PINs -------------------------------------------------
+
+  @UseGuards(PermissionsGuard)
+  @Post('user/set')
+  @Permissions('add_override_pin', 'update_override_pin', 'manage_override_pin')
+  async setUserPin(@Body() body: { userId: string; branchId?: string; pin?: string }) {
+    return this.svc.setUserPin(body.userId, body.branchId, body.pin || '');
+  }
+
+  @Post('user/verify')
+  async verifyUserPin(@Body() body: { userId: string; branchId?: string; pin: string }, @Req() req: any) {
+    const branchId = body.branchId || (req?.user?.branchId ? String(req.user.branchId) : undefined);
+    return this.svc.verifyUserPin(body.userId, branchId, body.pin || '');
+  }
 }

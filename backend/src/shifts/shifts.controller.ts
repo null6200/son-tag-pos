@@ -59,6 +59,8 @@ export class ShiftsController {
     return this.shifts.findOpenShiftForBranch(branchId);
   }
 
+  @UseGuards(PermissionsGuard)
+  @Permissions('close_cash_register')
   @Put(':id/close')
   async close(@Param('id') id: string, @Body() body: { closingCash: number }, @Req() req: any) {
     const rawId = req.user?.id || req.user?.sub || req.user?.userId || req.user?.uid;

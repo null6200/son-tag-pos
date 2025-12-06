@@ -12,6 +12,7 @@ import {
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { Permissions } from '../auth/permissions.decorator';
+import { Public } from '../auth/public.decorator';
 import { InventoryService } from './inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -33,6 +34,7 @@ export class InventoryController {
   }
 
   // Release all outstanding reservations for current user across a branch
+  @Public()
   @Get('release-reservations-all')
   async releaseReservationsAll(
     @Query('branchId') branchId: string | undefined,
@@ -176,6 +178,8 @@ export class InventoryController {
   }
 
   // Simple GET variant to support keepalive unload without CORS preflight
+  // Note: This endpoint bypasses JwtAuthGuard to allow unload requests to complete
+  @Public()
   @Get('sections/:sectionId/release-reservations')
   async releaseReservationsGet(
     @Param('sectionId') sectionId: string,
@@ -184,6 +188,7 @@ export class InventoryController {
     @Query('branchId') branchId: string | undefined,
     @Req() req: any,
   ) {
+    console.log('[release-reservations] GET request received', { sectionId, reservationKey, sectionName, branchId });
     const u = req?.user || {};
     const uid = u.id || u.userId || u.sub;
     const displayName = (u.firstName && u.surname) ? `${u.firstName} ${u.surname}` : (u.fullName || u.name || u.username || uid);
@@ -192,7 +197,14 @@ export class InventoryController {
       const sec = await this.prisma.section.findFirst({ where: { name: sectionName, ...(branchId ? { branchId } : {}) } });
       sid = (sec?.id as string) || sid;
     }
-    return this.inventory.releaseReservations(sid, reservationKey || undefined, { id: uid, name: displayName });
+    // If no reservationKey provided, this is a no-op (nothing to release)
+    if (!reservationKey) {
+      console.log('[release-reservations] No reservationKey provided, skipping');
+      return { restored: [], message: 'No reservationKey provided' };
+    }
+    const result = await this.inventory.releaseReservations(sid, reservationKey, { id: uid || 'anonymous', name: displayName || 'anonymous' });
+    console.log('[release-reservations] Result:', result);
+    return result;
   }
 
   @UseGuards(PermissionsGuard)

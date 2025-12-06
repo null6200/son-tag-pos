@@ -35,7 +35,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button';
 
 const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad, onSetDraftToLoad, onClearDraftToLoad }) => {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem('dashboardActiveTab');
+      return saved || 'overview';
+    } catch { return 'overview'; }
+  });
   const [managingSectionsFor, setManagingSectionsFor] = useState(null);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [posInitialShift, setPosInitialShift] = useState(initialShift || null);
@@ -46,20 +51,24 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
   const handleManageSections = (branch) => {
     setManagingSectionsFor(branch);
     setActiveTab('manage-sections');
+    try { localStorage.setItem('dashboardActiveTab', 'manage-sections'); } catch {}
   };
 
   const handleBackToBranches = () => {
     setManagingSectionsFor(null);
     setActiveTab('branches');
+    try { localStorage.setItem('dashboardActiveTab', 'branches'); } catch {}
   };
 
   const handleBackToSettings = () => {
     setActiveTab('settings');
+    try { localStorage.setItem('dashboardActiveTab', 'settings'); } catch {}
   };
   
   const handleSetActiveTab = (tab) => {
     setActiveTab(tab);
     setSidebarOpen(false);
+    try { localStorage.setItem('dashboardActiveTab', tab); } catch {}
   };
 
   // Do not auto-enter POS; selection happens via entry modal
@@ -139,7 +148,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
     const NoAccess = () => (<div className="p-6 text-sm text-muted-foreground">You don't have permission to access this section.</div>);
     const guard = (anyOf, el) => (anyOf && anyOf.length && !hasAny(perms, anyOf) ? <NoAccess /> : el);
     if (activeTab === 'pos') {
-      return <POSSystem user={user} initialShift={posInitialShift || initialShift} onBackToDashboard={() => setActiveTab('overview')} onLogout={onLogout} onOpenProfile={() => setActiveTab('user-overview')} theme={theme} setTheme={setTheme} draftToLoad={draftToLoad} onClearDraftToLoad={onClearDraftToLoad} />;
+      return <POSSystem user={user} initialShift={posInitialShift || initialShift} onBackToDashboard={() => { setActiveTab('overview'); try { localStorage.setItem('dashboardActiveTab', 'overview'); } catch {} }} onLogout={onLogout} onOpenProfile={() => { setActiveTab('user-overview'); try { localStorage.setItem('dashboardActiveTab', 'user-overview'); } catch {} }} theme={theme} setTheme={setTheme} draftToLoad={draftToLoad} onClearDraftToLoad={onClearDraftToLoad} />;
     }
 
     switch (activeTab) {
@@ -154,7 +163,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
       case 'contacts':
         return guard(['view_all_customer','view_own_customer','add_supplier','add_customer'], <Contacts user={user} />);
       case 'roles':
-        return guard(['view_role','add_role','edit_role'], <RolesAndPermissions user={user} />);
+        return guard(['settings','edit_settings'], <RolesAndPermissions user={user} />);
       case 'products':
         return guard(['view_product','add_product','edit_product'], <ProductManagement user={user} />);
       case 'reports':
@@ -190,7 +199,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
       case 'settings-product-types':
         return guard(['purchase_manage_inventory','view_product'], <ProductTypesManagement user={user} onBack={handleBackToSettings} />);
       case 'settings-service-types':
-        return guard(['purchase_manage_inventory','view_product'], <ServiceTypesManagement user={user} />);
+        return guard(['settings','edit_settings'], <ServiceTypesManagement user={user} />);
       case 'calendar':
         return <CalendarPage />;
       default:
@@ -224,7 +233,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
       <Sidebar user={user} activeTab={activeTab} setActiveTab={handleSetActiveTab} isOpen={isSidebarOpen} setOpen={setSidebarOpen} onGoToPOS={goToPOS} />
       
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header user={user} onLogout={onLogout} onMenuClick={() => setSidebarOpen(true)} setActiveTab={setActiveTab} onGoToPOS={goToPOS} />
+        <Header user={user} onLogout={onLogout} onMenuClick={() => setSidebarOpen(true)} setActiveTab={handleSetActiveTab} onGoToPOS={goToPOS} />
         
         <main className="flex-1 overflow-auto p-6">
           <AnimatePresence mode="wait">
@@ -252,7 +261,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
           </DialogHeader>
           <div className="space-y-4">
             {hasAny(Array.isArray(user?.permissions)?user.permissions:[], ['open_shift_register']) && (
-              <Button className="w-full" onClick={() => { setPosEntryModalOpen(false); setActiveTab('shift-register'); }}>
+              <Button className="w-full" onClick={() => { setPosEntryModalOpen(false); setActiveTab('shift-register'); try { localStorage.setItem('dashboardActiveTab', 'shift-register'); } catch {} }}>
                 Open New Shift
               </Button>
             )}
@@ -277,7 +286,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
           </div>
           <DialogFooter className="justify-between">
             {hasAny(Array.isArray(user?.permissions)?user.permissions:[], ['view_branch_section','add_branch_section','edit_branch_section']) && (
-              <Button variant="ghost" onClick={() => { setPosEntryModalOpen(false); setActiveTab('branches'); }}>
+              <Button variant="ghost" onClick={() => { setPosEntryModalOpen(false); setActiveTab('branches'); try { localStorage.setItem('dashboardActiveTab', 'branches'); } catch {} }}>
                 Manage Sections
               </Button>
             )}
@@ -315,7 +324,7 @@ const Dashboard = ({ user, onLogout, theme, setTheme, initialShift, draftToLoad,
                   const s = latest || openShifts.find(x => x.id === selectedShiftId);
                   setPosInitialShift(s || null);
                   setPosEntryModalOpen(false);
-                  setTimeout(() => setActiveTab('pos'), 0);
+                  setTimeout(() => { setActiveTab('pos'); try { localStorage.setItem('dashboardActiveTab', 'pos'); } catch {} }, 0);
                 } catch {}
               }}>Continue</Button>
             </div>

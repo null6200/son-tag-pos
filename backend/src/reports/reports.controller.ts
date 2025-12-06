@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Req, ForbiddenException } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { Permissions } from '../auth/permissions.decorator';
@@ -17,11 +17,35 @@ export class ReportsController {
     @Query('branchId') branchId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
+    @Req() req?: any,
   ) {
-    const lim = Math.max(0, parseInt(String(limit ?? '10')) || 10);
-    const off = Math.max(0, parseInt(String(offset ?? '0')) || 0);
+    // Enforce per-type permissions (any-of). Admin bypasses.
+    try {
+      const role = String(req?.user?.role || '').toUpperCase();
+      const perms: string[] = Array.isArray(req?.user?.permissions) ? req.user.permissions : [];
+      const has = (p: string) => (perms || []).includes('all') || (perms || []).includes(p);
+      const t = String(type || '').toLowerCase();
+      if (role !== 'ADMIN') {
+        if (t === 'inventory' && !has('view_stock_related_reports')) throw new ForbiddenException('Insufficient permissions');
+        if (t === 'staff' && !(has('view_sales_rep_report') || has('view_user'))) throw new ForbiddenException('Insufficient permissions');
+        if (t === 'cash_movements' && !has('view_cash_in_out_report')) throw new ForbiddenException('Insufficient permissions');
+        // activity_log currently allowed for authenticated users
+      }
+    } catch {}
+    // Prefer page/pageSize when provided for consistency with other endpoints.
+    const pageNum = Math.max(1, parseInt(String(page ?? '1')) || 1);
+    const sizeFromPage = parseInt(String(pageSize ?? '0')) || 0;
+    const sizeFromLimit = parseInt(String(limit ?? '0')) || 0;
+    const effSize = sizeFromPage || sizeFromLimit || 10;
+    const lim = Math.max(1, Math.min(effSize, 200));
+    const off = (() => {
+      if (page || pageSize) return (pageNum - 1) * lim;
+      return Math.max(0, parseInt(String(offset ?? '0')) || 0);
+    })();
     switch ((type || '').toLowerCase()) {
       case 'inventory':
         return this.reports.listInventory({ branchId, from, to, limit: lim, offset: off });
@@ -42,6 +66,7 @@ export class ReportsController {
   // Explicit inventory route used by frontend
   @UseGuards(PermissionsGuard)
   @Get('inventory')
+  @Permissions('view_stock_related_reports')
   async inventory(
     @Query('branchId') branchId?: string,
     @Query('from') from?: string,

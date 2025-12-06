@@ -528,6 +528,8 @@ model User {
   branchId String?
 
   orders           Order[]
+  saleEvents       SaleEvent[]
+  overridePins     UserOverridePin[]
   // HRM back-relations
   employeeProfile  EmployeeProfile?
   shiftAssignments ShiftAssignment[]
@@ -584,6 +586,9 @@ model Branch {
   // Security: branch-level override PIN for sensitive actions
   overridePinHash         String?
   overridePinGraceSeconds Int     @default(5)
+
+  // Optional per-user override PINs scoped to this branch
+  userOverridePins        UserOverridePin[]
 
   @@index([name])
 }
@@ -680,6 +685,7 @@ model Order {
   payments     Payment[]
   salesReturns SalesReturn[]
   drafts       Draft[]
+  saleEvents   SaleEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -705,6 +711,21 @@ model OrderItem {
 
   @@index([orderId])
   @@index([productId])
+}
+
+model SaleEvent {
+  id        String   @id @default(uuid())
+  order     Order    @relation(fields: [orderId], references: [id])
+  orderId   String
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  action    String
+  prevStatus String?
+  newStatus  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 // Shift register persistence
@@ -740,6 +761,21 @@ model AuditLog {
   @@index([branchId, createdAt])
 }
 
+// Optional: per-user override PINs for sensitive actions (e.g., discounts, suspends)
+model UserOverridePin {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  branchId  String?
+  pinHash   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, branchId])
+}
+
 // Application settings, optionally per-branch
 model Setting {
   id           String   @id @default(uuid())
@@ -765,6 +801,8 @@ model Setting {
   // Custom print footer notes
   receiptFooterNote String?
   invoiceFooterNote String?
+  // POS behavior settings
+  autoSelectLoggedInAsServiceStaff Boolean @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

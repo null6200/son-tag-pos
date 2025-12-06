@@ -42,6 +42,7 @@ export class InventoryService {
     for (const r of rows) {
       const ref = String(r.referenceId || '');
       if (!ref.includes('|RESV|')) continue; // only reservation-tagged movements
+      // Include RESV_RELEASE movements so net calculation is correct
       const sec = r.sectionFrom || r.sectionTo || null;
       if (!sec) continue;
       const pid = r.productId;
@@ -387,7 +388,17 @@ export class InventoryService {
     });
     // Movement: ADJUST at section level
     const userNameSafe2 = (dto as any)?.__userName as (string|undefined);
-    const resv = (dto as any)?.reason && String((dto as any).reason).startsWith('RESV|') ? String((dto as any).reason) : '';
+    const rawReason = String((dto as any)?.reason || '');
+    // If reason starts with RESV|, extract the reservation key for tagging
+    // Format: RESV|CART|uuid|ACTION -> we want |RESV|CART|uuid at the end
+    let resvTag = '';
+    if (rawReason.startsWith('RESV|')) {
+      // Extract just the reservation key part (CART|uuid), not the action suffix
+      const parts = rawReason.slice(5).split('|'); // ['CART', 'uuid', 'CART_ADD']
+      if (parts.length >= 2) {
+        resvTag = `|RESV|${parts[0]}|${parts[1]}`; // |RESV|CART|uuid
+      }
+    }
     const dataSection: any = {
       productId,
       branchId: section?.branchId || '',
@@ -395,7 +406,7 @@ export class InventoryService {
       sectionTo: deltaNum > 0 ? sectionId : null,
       delta: deltaNum,
       reason: 'ADJUST',
-      referenceId: `ADJ|${inv.qtyOnHand}|${newQty}|${userId || ''}|${userNameSafe2 || ''}|${(dto as any).reason || ''}${resv ? `|RESV|${resv.slice(5)}` : ''}`,
+      referenceId: `ADJ|${inv.qtyOnHand}|${newQty}|${userId || ''}|${userNameSafe2 || ''}|${rawReason}${resvTag}`,
     };
     await this.prisma.stockMovement.create({ data: dataSection });
     return updated;
@@ -492,9 +503,11 @@ export class InventoryService {
     reservationKey?: string,
     user?: { id?: string; name?: string },
   ) {
+    console.log('[releaseReservations] Called with:', { sectionId, reservationKey, userId: user?.id });
     if (!sectionId) throw new BadRequestException('sectionId is required');
     const section = await this.prisma.section.findUnique({ where: { id: sectionId }, select: { id: true, branchId: true } });
     if (!section) throw new NotFoundException('Section not found');
+    console.log('[releaseReservations] Found section:', section);
     // Load all relevant movements across the branch and compute balances by ORIGINAL sectionFrom
     const rows = await this.prisma.stockMovement.findMany({
       where: {
@@ -504,13 +517,21 @@ export class InventoryService {
       select: { productId: true, delta: true, referenceId: true, sectionFrom: true, sectionTo: true },
       orderBy: { createdAt: 'asc' },
     });
+    console.log('[releaseReservations] Found', rows.length, 'ADJUST movements');
     // section -> product -> sum(delta)
     const bySection: Record<string, Record<string, number>> = {};
+    const searchKey = reservationKey ? `|RESV|${reservationKey}` : null;
+    console.log('[releaseReservations] Searching for key:', searchKey);
+    let matchCount = 0;
     for (const r of rows) {
       const ref = String(r.referenceId || '');
       if (reservationKey) {
         const key = `|RESV|${reservationKey}`;
+        // Check if this movement contains our reservation key
+        // Include RESV_RELEASE movements so net calculation is correct
         if (!ref.includes(key)) continue;
+        matchCount++;
+        console.log('[releaseReservations] MATCH:', { ref: ref.substring(0, 100), delta: r.delta, productId: r.productId });
       } else if (user?.id) {
         const uid = String(user.id);
         if (!ref.includes(`|${uid}|`)) continue;
@@ -530,6 +551,7 @@ export class InventoryService {
         if (qty > 0) restores.push({ sectionId: sec, productId: pid, qty });
       });
     });
+    console.log('[releaseReservations] matchCount:', matchCount, 'restores:', restores);
     if (restores.length === 0) return { restored: [] };
     const restored: any[] = [];
     await this.prisma.$transaction(async (tx) => {

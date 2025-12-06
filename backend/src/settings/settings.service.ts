@@ -5,6 +5,13 @@ import { PrismaService } from '../prisma/prisma.service';
 export class SettingsService {
   constructor(private prisma: PrismaService) {}
 
+  private coerceDecimal(value: any): any {
+    if (value === null || value === undefined || value === '') return null;
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) return null;
+    return n as any;
+  }
+
   async get(branchId?: string) {
     if (!branchId) {
       // return the first or a default settings row; frontend may call this before selecting a branch
@@ -27,18 +34,18 @@ export class SettingsService {
     }
   }
 
-  async set(data: { branchId?: string; businessName?: string; currency?: string; taxRate?: number; tax1Name?: string; tax1Number?: number; tax2Name?: string; tax2Number?: number; enableInlineTax?: boolean; logoUrl?: string; address?: string; phone?: string; email?: string; currencySymbol?: string; theme?: string; allowOverselling?: boolean; receiptFooterNote?: string; invoiceFooterNote?: string }) {
+  async set(data: { branchId?: string; businessName?: string; currency?: string; taxRate?: number; tax1Name?: string; tax1Number?: number; tax2Name?: string; tax2Number?: number; enableInlineTax?: boolean; logoUrl?: string; address?: string; phone?: string; email?: string; currencySymbol?: string; theme?: string; allowOverselling?: boolean; receiptFooterNote?: string; invoiceFooterNote?: string; autoSelectLoggedInAsServiceStaff?: boolean }) {
     const branchId = data.branchId || null;
     if (branchId) {
       const exists = await this.prisma.setting.findFirst({ where: { branchId } });
       const payload: any = {
         businessName: data.businessName,
         currency: data.currency,
-        taxRate: data.taxRate as any,
+        taxRate: this.coerceDecimal(data.taxRate),
         tax1Name: data.tax1Name,
-        tax1Number: data.tax1Number as any,
+        tax1Number: this.coerceDecimal(data.tax1Number),
         tax2Name: data.tax2Name,
-        tax2Number: data.tax2Number as any,
+        tax2Number: this.coerceDecimal(data.tax2Number),
         enableInlineTax: data.enableInlineTax,
         logoUrl: data.logoUrl,
         address: data.address,
@@ -49,6 +56,7 @@ export class SettingsService {
         allowOverselling: data.allowOverselling,
         receiptFooterNote: data.receiptFooterNote,
         invoiceFooterNote: data.invoiceFooterNote,
+        autoSelectLoggedInAsServiceStaff: data.autoSelectLoggedInAsServiceStaff,
       };
       if (exists) {
         return this.prisma.setting.update({ where: { id: exists.id }, data: payload });
@@ -60,11 +68,11 @@ export class SettingsService {
     const payload: any = {
       businessName: data.businessName,
       currency: data.currency,
-      taxRate: data.taxRate as any,
+      taxRate: this.coerceDecimal(data.taxRate),
       tax1Name: data.tax1Name,
-      tax1Number: data.tax1Number as any,
+      tax1Number: this.coerceDecimal(data.tax1Number),
       tax2Name: data.tax2Name,
-      tax2Number: data.tax2Number as any,
+      tax2Number: this.coerceDecimal(data.tax2Number),
       enableInlineTax: data.enableInlineTax,
       logoUrl: data.logoUrl,
       address: data.address,
@@ -75,6 +83,7 @@ export class SettingsService {
       allowOverselling: data.allowOverselling,
       receiptFooterNote: data.receiptFooterNote,
       invoiceFooterNote: data.invoiceFooterNote,
+      autoSelectLoggedInAsServiceStaff: data.autoSelectLoggedInAsServiceStaff,
     };
     if (any) return this.prisma.setting.update({ where: { id: any.id }, data: payload });
     return this.prisma.setting.create({ data: payload });

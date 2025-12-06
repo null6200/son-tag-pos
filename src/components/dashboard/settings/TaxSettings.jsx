@@ -48,7 +48,14 @@ const TaxSettings = ({ onBack }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.settings.update(taxSettings);
+      const payload = {
+        ...taxSettings,
+        // Ensure numeric payloads are numbers; use Tax 1 rate as the default taxRate for POS
+        tax1Number: taxSettings.tax1Number === '' ? null : Number(taxSettings.tax1Number),
+        tax2Number: taxSettings.tax2Number === '' ? null : Number(taxSettings.tax2Number),
+        taxRate: taxSettings.tax1Number === '' ? null : Number(taxSettings.tax1Number),
+      };
+      await api.settings.update(payload);
       toast({ title: '✅ Settings Updated', description: 'Your tax settings have been successfully saved.' });
     } catch (err) {
       toast({ title: 'Save failed', description: String(err?.message || err), variant: 'destructive' });

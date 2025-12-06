@@ -21,7 +21,7 @@ const Sidebar = ({ user, activeTab, setActiveTab, isOpen, setOpen, onGoToPOS }) 
     { name: 'sell', icon: Tag, label: 'Sell Management', anyOf: ['view_pos_sell','add_pos_sell','edit_pos_sell','delete_pos_sell'] },
     { name: 'staff', icon: Users, label: 'User Management', anyOf: ['view_user','add_user','edit_user'] },
     { name: 'contacts', icon: AddressBook, label: 'Contacts', anyOf: ['view_all_customer','view_own_customer','add_supplier','add_customer'] },
-    { name: 'roles', icon: Shield, label: 'Roles & Permissions', anyOf: ['view_role','add_role','edit_role'] },
+    { name: 'roles', icon: Shield, label: 'Roles & Permissions', anyOf: ['settings','edit_settings','view_role','add_role','edit_role'] },
     { name: 'hrm', icon: UserCheck, label: 'HRM', anyOf: ['view_employee','view_shift'] },
     { name: 'shift-register', icon: Waypoints, label: 'Shift Register', anyOf: ['view_cash_register','open_shift_register','close_cash_register'] },
     { name: 'branches', icon: Building, label: 'Branches', anyOf: ['view_branch_section','add_branch_section'] },
