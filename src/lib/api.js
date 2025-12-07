@@ -1,4 +1,14 @@
 function inferBaseUrl() {
+  // 0) Hard override for production Hostinger frontend: always use VPS API domain over HTTPS
+  try {
+    if (typeof window !== 'undefined' && window.location) {
+      const { hostname } = window.location;
+      if (hostname === 'lightgoldenrodyellow-quail-668841.hostingersite.com') {
+        return 'https://srv1183099.hstgr.cloud';
+      }
+    }
+  } catch {}
+
   // 1) Prefer explicit VITE_API_URL at build time (Vite inlines this)
   try {
     const raw = (import.meta && import.meta.env && import.meta.env.VITE_API_URL) || '';
@@ -24,11 +34,6 @@ function inferBaseUrl() {
   try {
     if (typeof window !== 'undefined' && window.location) {
       const { protocol, hostname, port } = window.location;
-
-      // When running on the Hostinger frontend site, always talk to the VPS API domain over HTTPS
-      if (hostname === 'lightgoldenrodyellow-quail-668841.hostingersite.com') {
-        return 'https://srv1183099.hstgr.cloud';
-      }
 
       // If not on backend port 4000, assume we're on a frontend dev server and point to backend 4000
       if (port && port !== '4000') return `http://${hostname}:4000`;
