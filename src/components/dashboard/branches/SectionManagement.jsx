@@ -95,16 +95,19 @@ const SectionManagement = ({ branch, onBack }) => {
       }
     };
     loadSections();
-  }, [branch.id]);
+  }, [branch?.id]);
 
   const refresh = async () => {
     try {
+      if (!branch?.id) { setSections([]); return; }
       const rows = await api.sections.list({ branchId: branch.id });
       setSections(Array.isArray(rows) ? rows : []);
       const funcs = await api.sectionFunctions.list({ branchId: branch.id });
       const items = Array.isArray(funcs?.items) ? funcs.items : (Array.isArray(funcs) ? funcs : []);
       setSectionFunctions(items);
-    } catch { setSections([]); }
+    } catch {
+      setSections([]);
+    }
   };
 
   const handleSaveSection = async (sectionData) => {
@@ -155,7 +158,7 @@ const SectionManagement = ({ branch, onBack }) => {
               <ArrowLeft className="w-4 h-4 mr-2" /> Back to Branches
             </Button>
             <h2 className="text-3xl font-bold tracking-tight gradient-text">Manage Sections</h2>
-            <p className="text-muted-foreground">Operational areas for the "{branch.name}" branch.</p>
+            <p className="text-muted-foreground">Operational areas for the "{branch?.name || ''}" branch.</p>
           </div>
           <DialogTrigger asChild>
             <Button onClick={openAddForm} className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 gap-2">
@@ -223,7 +226,7 @@ const SectionManagement = ({ branch, onBack }) => {
         <DialogHeader>
           <DialogTitle>{editingSection ? 'Edit Section' : 'Add New Section'}</DialogTitle>
           <DialogDescription>
-            {editingSection ? `Update the details for your section in ${branch.name}.` : `Create a new section for the ${branch.name} branch.`}
+            {editingSection ? `Update the details for your section in ${branch?.name || ''}.` : `Create a new section for the ${branch?.name || ''} branch.`}
           </DialogDescription>
         </DialogHeader>
         <SectionForm section={editingSection} onSave={handleSaveSection} onCancel={() => setIsFormOpen(false)} sectionFunctions={sectionFunctions} />
