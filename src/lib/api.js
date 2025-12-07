@@ -24,6 +24,12 @@ function inferBaseUrl() {
   try {
     if (typeof window !== 'undefined' && window.location) {
       const { protocol, hostname, port } = window.location;
+
+      // When running on the Hostinger frontend site, always talk to the VPS API domain over HTTPS
+      if (hostname === 'lightgoldenrodyellow-quail-668841.hostingersite.com') {
+        return 'https://srv1183099.hstgr.cloud';
+      }
+
       // If not on backend port 4000, assume we're on a frontend dev server and point to backend 4000
       if (port && port !== '4000') return `http://${hostname}:4000`;
       // Otherwise (served by backend or standard ports), use same origin
