@@ -400,7 +400,14 @@ export class ReportsService {
       skip: params.offset,
       take: params.limit,
       orderBy: { username: 'asc' },
-      select: { id: true, username: true, firstName: true, surname: true, role: true },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        surname: true,
+        role: true,
+        appRole: { select: { name: true } },
+      },
     });
     const ids = users.map(u => u.id);
 
@@ -449,7 +456,7 @@ export class ReportsService {
       return {
         id: u.id,
         name,
-        role: u.role,
+        role: (u as any).appRole?.name || u.role,
         totalShifts: shiftMap.get(u.id) || 0,
         totalSales: s.total,
         lastActive: lastActive || new Date(0),
