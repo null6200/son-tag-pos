@@ -17,7 +17,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: ALLOWED_ORIGINS
-        value: https://stanfordelaze.com,https://www.stanfordelaze.com
+        value: https://stanfordelaze.com
 
 databases:
   - name: sontag-pos-db
