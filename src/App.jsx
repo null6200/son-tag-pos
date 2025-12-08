@@ -15,6 +15,7 @@ export default function App() {
   const [draftToLoad, setDraftToLoad] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [initialShift, setInitialShift] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [businessInfo, setBusinessInfo] = useState(() => {
     try { return JSON.parse(localStorage.getItem('businessInfo') || 'null'); } catch { return null; }
   });
@@ -105,6 +106,9 @@ export default function App() {
       })
       .catch(() => {
         setView('landing');
+      })
+      .finally(() => {
+        setAuthLoading(false);
       });
   }, []);
 
@@ -320,6 +324,7 @@ export default function App() {
   };
 
   const renderContent = () => {
+    if (authLoading) return null;
     switch (view) {
       case 'login':
         return <LoginPage onLogin={handleLogin} onNavigateToRegister={() => setView('register')} />;

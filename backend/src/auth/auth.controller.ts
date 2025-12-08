@@ -144,8 +144,10 @@ function setAuthCookies(res: Response, accessToken: string, refreshToken: string
 }
 
 function clearAuthCookies(res: Response) {
-  res.clearCookie('access_token', { path: '/' });
-  res.clearCookie('refresh_token', { path: '/' });
+  const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+  const common = { httpOnly: true, secure: isProd, sameSite: (isProd ? 'none' : 'lax'), path: '/' } as any;
+  res.clearCookie('access_token', common);
+  res.clearCookie('refresh_token', common);
 }
 
 function getCookie(req: Request, key: string): string | undefined {
