@@ -3,7 +3,10 @@ function inferBaseUrl() {
   try {
     if (typeof window !== 'undefined' && window.location) {
       const { hostname } = window.location;
-      if (hostname === 'lightgoldenrodyellow-quail-668841.hostingersite.com') {
+      // Support both old hostinger subdomain and new custom domain
+      if (hostname === 'lightgoldenrodyellow-quail-668841.hostingersite.com' ||
+          hostname === 'stanfordelaze.com' ||
+          hostname === 'www.stanfordelaze.com') {
         return 'https://srv1183099.hstgr.cloud';
       }
     }
