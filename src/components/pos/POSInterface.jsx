@@ -136,13 +136,29 @@ const categories = ['All'];
 const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLogout, shiftRegister, onShiftClose, draftToLoad, onClearDraftToLoad }) => {
   const [time, setTime] = useState(new Date());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [cart, setCart] = useState([]);
-  const [currentSection, setCurrentSection] = useState('');
+  const [cart, setCart] = useState(() => {
+    try {
+      const saved = localStorage.getItem('posCart');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [currentSection, setCurrentSection] = useState(() => {
+    try { return localStorage.getItem('posCurrentSection') || ''; } catch { return ''; }
+  });
   const [branchSections, setBranchSections] = useState([]);
   const [serviceTypes, setServiceTypes] = useState([]);
-  const [currentService, setCurrentService] = useState('');
-  const [currentCustomer, setCurrentCustomer] = useState(customerTypes[0]);
-  const [selectedTable, setSelectedTable] = useState(null);
+  const [currentService, setCurrentService] = useState(() => {
+    try { return localStorage.getItem('posCurrentService') || ''; } catch { return ''; }
+  });
+  const [currentCustomer, setCurrentCustomer] = useState(() => {
+    try { return localStorage.getItem('posCurrentCustomer') || customerTypes[0]; } catch { return customerTypes[0]; }
+  });
+  const [selectedTable, setSelectedTable] = useState(() => {
+    try {
+      const saved = localStorage.getItem('posSelectedTable');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
   const [isPinModalOpen, setPinModalOpen] = useState(false);
   const [isPaymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentMode, setPaymentMode] = useState('cash');
@@ -159,6 +175,35 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   });
   const printRef = useRef();
   const cartRef = useRef(cart);
+
+  // Persist cart to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      if (cart.length > 0) {
+        localStorage.setItem('posCart', JSON.stringify(cart));
+      } else {
+        localStorage.removeItem('posCart');
+      }
+    } catch {}
+  }, [cart]);
+
+  // Persist section, service, customer, and table to localStorage
+  useEffect(() => {
+    try { if (currentSection) localStorage.setItem('posCurrentSection', currentSection); } catch {}
+  }, [currentSection]);
+  useEffect(() => {
+    try { if (currentService) localStorage.setItem('posCurrentService', currentService); } catch {}
+  }, [currentService]);
+  useEffect(() => {
+    try { if (currentCustomer) localStorage.setItem('posCurrentCustomer', currentCustomer); } catch {}
+  }, [currentCustomer]);
+  useEffect(() => {
+    try {
+      if (selectedTable) localStorage.setItem('posSelectedTable', JSON.stringify(selectedTable));
+      else localStorage.removeItem('posSelectedTable');
+    } catch {}
+  }, [selectedTable]);
+
   const sectionRef = useRef(currentSection);
   const reservationKeyRef = useRef(reservationKey);
   const [products, setProducts] = useState([]);
