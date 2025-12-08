@@ -45,13 +45,13 @@ export class TablesController {
   @Permissions('edit_tables')
   @Put(':id/lock')
   async lock(@Param('id') id: string, @Req() req: any) {
-    return this.tables.lock(id, req.user?.role);
+    return this.tables.lock(id, req.user?.role, req.user?.id);
   }
 
   @UseGuards(PermissionsGuard)
   @Permissions('edit_tables')
   @Put(':id/unlock')
   async unlock(@Param('id') id: string, @Req() req: any) {
-    return this.tables.unlock(id, req.user?.role);
+    return this.tables.unlock(id, req.user?.role, req.user?.id);
   }
 }

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { api } from '@/lib/api';
+import { useRealtime } from '@/lib/useRealtime';
 
 const TableSelection = ({ session, setSession, user }) => {
   const [tables, setTables] = useState([]);
@@ -22,8 +23,8 @@ const TableSelection = ({ session, setSession, user }) => {
         const resolvedSectionId = session?.sectionId || preferred?.id || null;
         setSectionId(resolvedSectionId);
         if (resolvedSectionId) {
-          const tables = await api.tables.list({ sectionId: resolvedSectionId });
-          setTables((tables || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: t.locked ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
+          const rows = await api.tables.list({ sectionId: resolvedSectionId });
+          setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: (t.status === 'locked' || t.status === 'occupied') ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
         } else {
           setTables([]);
         }
@@ -41,13 +42,22 @@ const TableSelection = ({ session, setSession, user }) => {
       try {
         if (!sectionId) return;
         const rows = await api.tables.list({ sectionId });
-        setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: t.locked ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
+        setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: (t.status === 'locked' || t.status === 'occupied') ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
       } catch {
         setTables([]);
       }
     };
     loadTables();
   }, [sectionId]);
+
+  // Real-time: auto-refresh tables when table status changes from other users
+  useRealtime('table:status_changed', async () => {
+    try {
+      if (!sectionId) return;
+      const rows = await api.tables.list({ sectionId });
+      setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: (t.status === 'locked' || t.status === 'occupied') ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
+    } catch {}
+  }, { skipActorId: user?.id });
 
   const handleSelectTable = async (table) => {
     if (table.status !== 'available') {
@@ -57,7 +67,7 @@ const TableSelection = ({ session, setSession, user }) => {
     try {
       await api.tables.lock(table.id);
       const rows = await api.tables.list({ sectionId });
-      setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: t.locked ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
+      setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: (t.status === 'locked' || t.status === 'occupied') ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
       setSession({ ...session, sectionId, table: { id: table.id, name: table.name, status: 'occupied' } });
       toast({ title: `Table ${table.name} Selected`, description: `Locked by ${user.username}` });
     } catch (e) {
@@ -66,7 +76,7 @@ const TableSelection = ({ session, setSession, user }) => {
       // try refresh in case conflict/409
       try {
         const rows = await api.tables.list({ sectionId });
-        setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: t.locked ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
+        setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, status: (t.status === 'locked' || t.status === 'occupied') ? 'occupied' : 'available', capacity: t.capacity || 0, locked_by: t.lockedBy || null })));
       } catch {}
     }
   };
