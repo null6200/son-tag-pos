@@ -1,9 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException, NotImplementedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../events';
 
 @Injectable()
 export class CustomersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async listAll(branchId?: string) {
     const where: any = {};
@@ -23,7 +27,18 @@ export class CustomersService {
       email: dto.email ?? null,
       notes: dto.address ?? dto.notes ?? null,
     } as const;
-    return this.prisma.customer.create({ data });
+    const customer = await this.prisma.customer.create({ data });
+
+    // Emit real-time event for customer created (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'customer:created',
+        branchId,
+        payload: { id: customer.id, name: customer.name },
+      });
+    } catch {}
+
+    return customer;
   }
 
   async update(id: string, dto: any) {
@@ -54,13 +69,35 @@ export class CustomersService {
       provided++;
     }
     if (provided === 0) throw new BadRequestException('No fields to update');
-    return this.prisma.customer.update({ where: { id }, data });
+    const updated = await this.prisma.customer.update({ where: { id }, data });
+
+    // Emit real-time event for customer updated (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'customer:updated',
+        branchId: exists.branchId,
+        payload: { id: updated.id, name: updated.name },
+      });
+    } catch {}
+
+    return updated;
   }
 
   async remove(id: string) {
     const exists = await this.prisma.customer.findUnique({ where: { id } });
     if (!exists) throw new NotFoundException('Customer not found');
-    return this.prisma.customer.delete({ where: { id } });
+    const deleted = await this.prisma.customer.delete({ where: { id } });
+
+    // Emit real-time event for customer deleted (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'customer:deleted',
+        branchId: exists.branchId,
+        payload: { id },
+      });
+    } catch {}
+
+    return deleted;
   }
 
   notImplemented() { throw new NotImplementedException(); }

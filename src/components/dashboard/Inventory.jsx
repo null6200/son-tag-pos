@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Package, Plus, Edit, AlertTriangle, LayoutGrid, List } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/use-toast';
 import { api } from '@/lib/api';
+import { useRealtime } from '@/lib/useRealtime';
 
 const Inventory = ({ user }) => {
   const [inventory, setInventory] = useState([]);
@@ -90,6 +91,32 @@ const Inventory = ({ user }) => {
     };
     load();
   }, [user?.branchId, user?.branch?.id]);
+
+  // Real-time: auto-refresh when stock changes from other cashiers
+  const reloadInventory = useCallback(() => {
+    // Trigger the load effect by forcing a re-render
+    const load = async () => {
+      let resolvedBranchId = user?.branchId || user?.branch?.id;
+      if (!resolvedBranchId) return;
+      try {
+        const [agg] = await Promise.all([
+          api.inventory.aggregate({ branchId: resolvedBranchId }),
+        ]);
+        const aggArr = Array.isArray(agg?.items) ? agg.items : (Array.isArray(agg) ? agg : []);
+        // Update overview with new totals
+        setOverview(prev => prev.map(row => {
+          const updated = aggArr.find(a => a.productId === row.productId);
+          if (updated) {
+            return { ...row, total: Number(updated.total || 0), perSection: updated.perSection || {} };
+          }
+          return row;
+        }));
+      } catch {}
+    };
+    load();
+  }, [user?.branchId, user?.branch?.id]);
+
+  useRealtime('inventory:updated', reloadInventory, { skipActorId: user?.id });
 
   // Derived/paginated data for Overview
   const filteredOverview = useMemo(() => {

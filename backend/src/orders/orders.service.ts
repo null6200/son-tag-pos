@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { EventsService } from '../events';
 
 interface CreateOrderItem {
   productId: string;
@@ -43,7 +44,11 @@ interface CreateOrderDto {
 
 @Injectable()
 export class OrdersService {
-  constructor(private prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly events: EventsService,
+  ) {}
 
   // Internal helper: record a structured event against an order for accountability.
   private async logEvent(orderId: string, params: { userId?: string | null; action: string; prevStatus?: string | null; newStatus?: string | null; meta?: any }) {
@@ -683,6 +688,16 @@ export class OrdersService {
         } catch {}
       }
 
+      // Emit real-time event for sale creation (fire-and-forget, never blocks)
+      try {
+        this.events.emitSaleEvent('sale:created', resolvedBranchId, order.id, {
+          status: effectiveStatus,
+          total: finalTotal,
+          tableId: dto.tableId || null,
+          sectionId: dto.sectionId || null,
+        }, userId);
+      } catch {}
+
       return created;
     });
   }
@@ -819,6 +834,15 @@ export class OrdersService {
         } catch (err) {
           console.error('[updateStatus] Failed to log STATUS_CHANGED event:', err);
         }
+
+        // Emit real-time event for status change (fire-and-forget)
+        try {
+          this.events.emitSaleEvent('sale:status_changed', order.branchId, orderId, {
+            prevStatus: prevStatusStr,
+            newStatus: newStatusStr,
+            tableId: order.tableId || null,
+          }, actorUserId);
+        } catch {}
       }
 
       return updated;
@@ -945,6 +969,14 @@ export class OrdersService {
       } catch (err) {
         console.error('[refund] Failed to log REFUNDED_ORDER event:', err);
       }
+
+      // Emit real-time event for refund (fire-and-forget)
+      try {
+        this.events.emitSaleEvent('sale:refunded', order.branchId, orderId, {
+          amount,
+          type: 'FULL',
+        }, actorUserId);
+      } catch {}
 
       // Optional override PIN audit for full refunds
       if (overrideOwnerId) {
@@ -1091,7 +1123,19 @@ export class OrdersService {
         }
       }
 
-      return tx.order.findUnique({ where: { id: orderId }, include: { payments: true, items: true } as any });
+      const result = await tx.order.findUnique({ where: { id: orderId }, include: { payments: true, items: true } as any });
+
+      // Emit real-time event for payment added (fire-and-forget)
+      try {
+        this.events.emitSaleEvent('sale:payment_added', order.branchId, orderId, {
+          method: dto.method,
+          amount: Number(dto.amount || 0),
+          newStatus: newStatus,
+          paid,
+        }, actorUserId);
+      } catch {}
+
+      return result;
     });
   }
 

@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/lib/api';
 import { RequirePermission, hasPermission } from '@/lib/permissions';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { useRealtime } from '@/lib/useRealtime';
 
 const TableManagement = ({ user }) => {
   const [tables, setTables] = useState([]);
@@ -97,6 +98,11 @@ const TableManagement = ({ user }) => {
     const list = await api.tables.list({ sectionId: tableSection });
     setTables(list || []);
   };
+
+  // Real-time: auto-refresh when table status changes from other users
+  useRealtime('table:status_changed', () => {
+    refreshTables();
+  }, { skipActorId: user?.id });
 
   const handleAddTable = () => {
     setCurrentTable(null);

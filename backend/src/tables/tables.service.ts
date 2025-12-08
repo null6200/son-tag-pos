@@ -6,10 +6,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { EventsService } from '../events';
 
 @Injectable()
 export class TablesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async listBySection(sectionId: string) {
     return this.prisma.table.findMany({
@@ -86,25 +90,64 @@ export class TablesService {
     return this.prisma.table.delete({ where: { id } });
   }
 
-  async lock(id: string, role?: string) {
+  async lock(id: string, role?: string, userId?: string) {
     // Authorization handled by PermissionsGuard at controller level
-    const t = await this.prisma.table.findUnique({ where: { id } });
+    const t = await this.prisma.table.findUnique({ where: { id }, include: { section: true } });
     if (!t) throw new NotFoundException('Table not found');
     if (t.status === 'locked') throw new BadRequestException('Already locked');
-    return this.prisma.table.update({
+    const updated = await this.prisma.table.update({
       where: { id },
       data: { status: 'locked' },
     });
+
+    // Emit real-time event for table lock (fire-and-forget)
+    try {
+      const branchId = t.section?.branchId;
+      if (branchId) {
+        this.events.emitTableEvent(branchId, id, 'locked', userId);
+      }
+    } catch {}
+
+    return updated;
   }
 
-  async unlock(id: string, role?: string) {
+  async unlock(id: string, role?: string, userId?: string) {
     // Authorization handled by PermissionsGuard at controller level
-    const t = await this.prisma.table.findUnique({ where: { id } });
+    const t = await this.prisma.table.findUnique({ where: { id }, include: { section: true } });
     if (!t) throw new NotFoundException('Table not found');
     if (t.status !== 'locked') throw new BadRequestException('Not locked');
-    return this.prisma.table.update({
+    const updated = await this.prisma.table.update({
       where: { id },
       data: { status: 'available' },
     });
+
+    // Emit real-time event for table unlock (fire-and-forget)
+    try {
+      const branchId = t.section?.branchId;
+      if (branchId) {
+        this.events.emitTableEvent(branchId, id, 'available', userId);
+      }
+    } catch {}
+
+    return updated;
+  }
+
+  async updateStatus(id: string, status: string, userId?: string) {
+    const t = await this.prisma.table.findUnique({ where: { id }, include: { section: true } });
+    if (!t) throw new NotFoundException('Table not found');
+    const updated = await this.prisma.table.update({
+      where: { id },
+      data: { status },
+    });
+
+    // Emit real-time event for table status change (fire-and-forget)
+    try {
+      const branchId = t.section?.branchId;
+      if (branchId) {
+        this.events.emitTableEvent(branchId, id, status, userId);
+      }
+    } catch {}
+
+    return updated;
   }
 }

@@ -41,6 +41,7 @@ import { SettingsModule } from './settings/settings.module';
 import { SubcategoriesModule } from './subcategories/subcategories.module';
 import { DiscountsModule } from './discounts/discounts.module';
 import { UploadsController } from './uploads.controller';
+import { EventsModule } from './events';
 
 // Resolve the frontend dist folder at the project root in both dev and prod
 // Support multiple launch contexts: from project root, from backend/, and from backend/dist
@@ -97,6 +98,7 @@ const STATIC_MODULES = [
     SettingsModule,
     SubcategoriesModule,
     DiscountsModule,
+    EventsModule,
   ],
   controllers: [AppController, HealthController, AuditController, UploadsController],
   providers: [

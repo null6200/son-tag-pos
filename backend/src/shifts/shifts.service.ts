@@ -1,9 +1,13 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../events';
 
 @Injectable()
 export class ShiftsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async openShift(params: { branchId?: string; sectionId: string; openedById: string; openingCash: number }) {
     let { branchId, sectionId, openedById, openingCash } = params;
@@ -35,6 +39,17 @@ export class ShiftsService {
       },
     });
     const user = await this.prisma.user.findUnique({ where: { id: openedById }, select: { username: true } });
+
+    // Emit real-time event for shift opened (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'shift:opened',
+        branchId: branchId,
+        payload: { id: shift.id, sectionId, openedById },
+        actorUserId: openedById,
+      });
+    } catch {}
+
     return { ...shift, openedByUsername: user?.username ?? null } as any;
   }
 
@@ -166,6 +181,17 @@ export class ShiftsService {
       const users = await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, username: true } });
       usersById = users.reduce((acc, u) => { acc[u.id] = u.username; return acc; }, {} as Record<string, string>);
     }
+
+    // Emit real-time event for shift closed (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'shift:closed',
+        branchId: shift.branchId,
+        payload: { id: closed.id, sectionId: closed.sectionId, closedById },
+        actorUserId: closedById,
+      });
+    } catch {}
+
     return {
       ...closed,
       openedByUsername: closed.openedById ? usersById[closed.openedById] ?? null : null,

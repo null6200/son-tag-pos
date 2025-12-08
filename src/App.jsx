@@ -7,6 +7,7 @@ import { Toaster } from '@/components/ui/toaster';
 import LandingPage from '@/pages/LandingPage';
 import RegisterPage from '@/pages/RegisterPage';
 import { api, setAuthProvider } from '@/lib/api';
+import { subscribeToBranch, unsubscribeFromBranch } from '@/lib/socket';
 
 export default function App() {
   const [view, setView] = useState('landing'); // 'landing', 'login', 'register', 'dashboard'
@@ -116,6 +117,20 @@ export default function App() {
   useEffect(() => {
     setAuthProvider(() => authToken || null);
   }, [authToken]);
+
+  // Real-time WebSocket subscription: connect when user is logged in
+  // This enables instant updates when other cashiers make changes
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const branchId = currentUser?.branchId || currentUser?.branch?.id;
+    if (branchId) {
+      subscribeToBranch(branchId, currentUser.id);
+      console.log('[App] Real-time subscription active for branch:', branchId);
+    }
+    return () => {
+      unsubscribeFromBranch();
+    };
+  }, [currentUser?.id, currentUser?.branchId, currentUser?.branch?.id]);
 
   // Lightweight activity heartbeat: as long as a user is logged in and the app is
   // open, periodically ping the backend to bump session lastUsedAt so active

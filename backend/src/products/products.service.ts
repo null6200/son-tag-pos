@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../events';
 
 interface CreateProductDto {
   name: string;
@@ -31,7 +32,10 @@ interface UpdateProductDto {
 
 @Injectable()
 export class ProductsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async list(branchId?: string, includeArchived?: boolean) {
     return this.prisma.product.findMany({
@@ -127,6 +131,18 @@ export class ProductsService {
       if (e?.code === 'P2002') throw new BadRequestException('A product with this SKU already exists.');
       throw e;
     }
+
+    // Emit real-time event for product created (fire-and-forget)
+    try {
+      if (product && branchId) {
+        this.events.emitProductEvent('product:created', branchId, product.id, {
+          name: product.name,
+          price: product.price,
+          category: product.category,
+        });
+      }
+    } catch {}
+
     return product;
   }
 
@@ -150,7 +166,7 @@ export class ProductsService {
         productTypeId = ptByName.id;
       }
     }
-    return this.prisma.product.update({
+    const updated = await this.prisma.product.update({
       where: { id },
       data: {
         name: dto.name,
@@ -161,16 +177,34 @@ export class ProductsService {
         ...(productTypeId !== undefined ? { productTypeId } : {}),
       },
     });
+
+    // Emit real-time event for product updated (fire-and-forget)
+    try {
+      this.events.emitProductEvent('product:updated', exist.branchId, id, {
+        name: updated.name,
+        price: updated.price,
+        category: updated.category,
+      });
+    } catch {}
+
+    return updated;
   }
 
   async remove(id: string, role: string) {
     // Permission is enforced at controller via PermissionsGuard
     const exist = await this.prisma.product.findUnique({ where: { id } });
     if (!exist) throw new NotFoundException('Product not found');
+    const branchId = exist.branchId;
+
     // If product has sales, archive instead of deleting
     const salesCount = await this.prisma.orderItem.count({ where: { productId: id } });
     if (salesCount > 0) {
-      return this.prisma.product.update({ where: { id }, data: { archived: true } });
+      const archived = await this.prisma.product.update({ where: { id }, data: { archived: true } });
+      // Emit real-time event for product deleted/archived (fire-and-forget)
+      try {
+        this.events.emitProductEvent('product:deleted', branchId, id, { archived: true });
+      } catch {}
+      return archived;
     }
     try {
       // Delete dependent rows that might block deletion
@@ -178,10 +212,20 @@ export class ProductsService {
       await this.prisma.sectionInventory.deleteMany({ where: { productId: id } }).catch(() => {});
       await this.prisma.orderItem.deleteMany({ where: { productId: id } }).catch(() => {});
       await this.prisma.priceEntry.deleteMany({ where: { productId: id } }).catch(() => {});
-      return await this.prisma.product.delete({ where: { id } });
+      const deleted = await this.prisma.product.delete({ where: { id } });
+      // Emit real-time event for product deleted (fire-and-forget)
+      try {
+        this.events.emitProductEvent('product:deleted', branchId, id, { archived: false });
+      } catch {}
+      return deleted;
     } catch (e: any) {
       // If deletion fails due to referential integrity or any unexpected issue, fallback to archive
-      return this.prisma.product.update({ where: { id }, data: { archived: true } });
+      const archived = await this.prisma.product.update({ where: { id }, data: { archived: true } });
+      // Emit real-time event for product archived (fire-and-forget)
+      try {
+        this.events.emitProductEvent('product:deleted', branchId, id, { archived: true });
+      } catch {}
+      return archived;
     }
   }
 }

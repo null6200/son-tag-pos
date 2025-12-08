@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, NotFoundException, ForbiddenException 
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { OverridePinService } from '../hrm/override-pin.service';
+import { EventsService } from '../events';
 
 interface DraftPayload {
   id?: string;
@@ -26,7 +27,12 @@ interface DraftPayload {
 
 @Injectable()
 export class DraftsService {
-  constructor(private prisma: PrismaService, private readonly audit: AuditService, private readonly overridePins: OverridePinService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly overridePins: OverridePinService,
+    private readonly events: EventsService,
+  ) {}
 
   // Helper: ensure cart updates are non-destructive for limited roles (e.g., waiters).
   // Treats cart as an array of line items with productId and qty; if structure differs,
@@ -275,6 +281,16 @@ export class DraftsService {
         } catch {}
       }
 
+      // Emit real-time event for draft creation (fire-and-forget)
+      try {
+        this.events.emitDraftEvent('draft:created', dto.branchId, draft.id, {
+          name: draft.name,
+          tableId: draft.tableId || null,
+          sectionId: draft.sectionId || null,
+          status: draft.status,
+        }, actorUserId);
+      } catch {}
+
       return draft;
     });
   }
@@ -448,6 +464,17 @@ export class DraftsService {
       } catch {}
     }
 
+    // Emit real-time event for draft update (fire-and-forget)
+    try {
+      this.events.emitDraftEvent('draft:updated', existing.branchId, updated.id, {
+        name: updated.name,
+        tableId: updated.tableId || null,
+        sectionId: updated.sectionId || null,
+        status: updated.status,
+        total: updated.total,
+      }, userId);
+    } catch {}
+
     return updated;
   }
 
@@ -552,6 +579,15 @@ export class DraftsService {
         });
       } catch {}
     }
+
+    // Emit real-time event for draft deletion (fire-and-forget)
+    try {
+      this.events.emitDraftEvent('draft:deleted', deleted.branchId, deleted.id, {
+        name: deleted.name,
+        tableId: deleted.tableId || null,
+        sectionId: deleted.sectionId || null,
+      }, userId);
+    } catch {}
 
     return deleted;
   }

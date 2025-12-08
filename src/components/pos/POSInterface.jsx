@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api, getApiBaseUrl } from '@/lib/api';
+import { useRealtime } from '@/lib/useRealtime';
 
 // Helper to format numbers with commas (e.g., 1,000,000.00)
 const formatAmount = (num) => {
@@ -793,6 +794,53 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSection, user?.branchId]);
+
+  // Real-time: auto-refresh stock when inventory changes from other cashiers
+  useRealtime('inventory:updated', () => {
+    scheduleRefreshPricingAndStock(300);
+  }, { skipActorId: user?.id });
+
+  // Real-time: auto-refresh tables when table status changes from other users
+  useRealtime('table:status_changed', async () => {
+    try {
+      if (!currentSection) return;
+      const rows = await api.tables.list({ sectionId: currentSection });
+      setTables((rows || []).map(t => ({
+        id: t.id,
+        name: t.name || t.code || t.id,
+        sectionId: t.sectionId || t.section?.id || t.section,
+        sectionName: t.section?.name || '',
+        status: ((String(t.status || '').toLowerCase() === 'locked') || (String(t.status || '').toLowerCase() === 'occupied') || !!t.locked) ? 'occupied' : 'available',
+        updatedAt: t.updatedAt || t.updated_at || null,
+      })));
+    } catch {}
+  }, { skipActorId: user?.id });
+
+  // Real-time: auto-refresh drafts when other cashiers create/update/delete drafts
+  useRealtime(['draft:created', 'draft:updated', 'draft:deleted'], () => {
+    try { fetchDrafts(draftsPage); } catch {}
+  }, { skipActorId: user?.id });
+
+  // Real-time: auto-refresh products when products are created/updated/deleted
+  useRealtime(['product:created', 'product:updated', 'product:deleted'], async () => {
+    try {
+      const prods = await api.products.list({ branchId: user?.branchId || undefined });
+      const arr = Array.isArray(prods?.items) ? prods.items : (Array.isArray(prods) ? prods : []);
+      setProducts(arr.map(p => ({
+        id: String(p.id),
+        name: p.name,
+        station: p.category || 'neutral',
+        price: Number(p.price) || 0,
+        image: p.image || p.imageUrl || null,
+        productTypeId: p.productTypeId || null,
+      })));
+    } catch {}
+  }, { skipActorId: user?.id });
+
+  // Real-time: auto-refresh prices when prices are updated
+  useRealtime('price:updated', () => {
+    scheduleRefreshPricingAndStock(300);
+  }, { skipActorId: user?.id });
 
   // Load service types for the current branch and set a default if none selected
   useEffect(() => {

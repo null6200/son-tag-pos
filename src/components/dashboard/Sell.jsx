@@ -1,6 +1,7 @@
  import React, { useState, useEffect, useRef } from 'react';
 import { api } from '@/lib/api';
 import { api as fullApi } from '@/lib/api';
+import { useRealtime } from '@/lib/useRealtime';
 import { motion } from 'framer-motion';
 import { ShoppingCart, List, PlusCircle, FileText, RotateCcw, Percent, Search, Calendar, User, MoreVertical, Eye, Printer, Trash2, Edit } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -324,6 +325,13 @@ const SalesList = ({ onPrint, user, filters }) => {
             window.removeEventListener('orders:refunded', onChanged);
         };
     }, []);
+
+    // Real-time: auto-refresh when other cashiers create/update sales
+    useRealtime(
+        ['sale:created', 'sale:status_changed', 'sale:payment_added', 'sale:refunded'],
+        () => { fetchSales(); },
+        { skipActorId: user?.id }
+    );
 
     const filteredSales = sales.filter(sale => {
         const q = searchTerm.toLowerCase();
@@ -1088,6 +1096,13 @@ const DraftList = ({ setActiveTab, onSetDraftToLoad, user, mode = 'drafts', filt
     }, 3000);
     return () => clearInterval(id);
   }, [drafts.length]);
+
+  // Real-time: auto-refresh when other cashiers create/update/delete drafts
+  useRealtime(
+    ['draft:created', 'draft:updated', 'draft:deleted'],
+    () => { fetchDrafts(); },
+    { skipActorId: user?.id }
+  );
 
   // Load override-capable users (manager/supervisor/admin/accountant) for refund overrides
   useEffect(() => {

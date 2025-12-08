@@ -1,9 +1,13 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../events';
 
 @Injectable()
 export class SectionsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async listByBranch(branchId: string) {
     const rows = await this.prisma.section.findMany({
@@ -27,7 +31,7 @@ export class SectionsService {
       if (!fn) throw new NotFoundException('Section function not found');
       if (fn.branchId !== dto.branchId) throw new ForbiddenException('Section function belongs to a different branch');
     }
-    return this.prisma.section.create({ data: {
+    const section = await this.prisma.section.create({ data: {
       branchId: dto.branchId,
       name: dto.name,
       description: dto.description ?? null,
@@ -35,6 +39,17 @@ export class SectionsService {
       // legacy compatibility
       function: dto.function ?? null,
     }});
+
+    // Emit real-time event for section created (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'section:created',
+        branchId: dto.branchId,
+        payload: { id: section.id, name: section.name },
+      });
+    } catch {}
+
+    return section;
   }
 
   async update(id: string, dto: { name?: string; description?: string; function?: string; sectionFunctionId?: string }, role: string) {
@@ -52,19 +67,41 @@ export class SectionsService {
         sectionFunctionId = fn.id;
       }
     }
-    return this.prisma.section.update({ where: { id }, data: {
+    const updated = await this.prisma.section.update({ where: { id }, data: {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.function !== undefined ? { function: dto.function } : {}),
       ...(sectionFunctionId !== undefined ? { sectionFunctionId } : {}),
     }});
+
+    // Emit real-time event for section updated (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'section:updated',
+        branchId: existing.branchId,
+        payload: { id: updated.id, name: updated.name },
+      });
+    } catch {}
+
+    return updated;
   }
 
   async remove(id: string, role: string) {
     if (role !== 'ADMIN' && role !== 'MANAGER') throw new ForbiddenException('Insufficient role');
     const existing = await this.prisma.section.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Section not found');
-    return this.prisma.section.delete({ where: { id } });
+    const deleted = await this.prisma.section.delete({ where: { id } });
+
+    // Emit real-time event for section deleted (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'section:deleted',
+        branchId: existing.branchId,
+        payload: { id },
+      });
+    } catch {}
+
+    return deleted;
   }
 
   async allowedForProductType(branchId: string, productTypeId?: string) {

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../events';
 
 interface AdjustStockDto {
   delta: number; // positive to add, negative to remove
@@ -12,7 +13,10 @@ interface AdjustStockDto {
 
 @Injectable()
 export class InventoryService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async listByBranch(branchId: string) {
     return this.prisma.inventory.findMany({
@@ -353,6 +357,12 @@ export class InventoryService {
       referenceId: `ADJ|${prevQty}|${updated.qtyOnHand}|${userId || ''}|${userNameSafe || ''}|${(dto as any).reason || ''}`,
     };
     await this.prisma.stockMovement.create({ data: dataBranch });
+
+    // Emit real-time event for stock adjustment (fire-and-forget)
+    try {
+      this.events.emitInventoryEvent(branchId, productId, updated.qtyOnHand, (dto as any).reason || 'ADJUST', userId);
+    } catch {}
+
     return updated;
   }
 
@@ -409,6 +419,12 @@ export class InventoryService {
       referenceId: `ADJ|${inv.qtyOnHand}|${newQty}|${userId || ''}|${userNameSafe2 || ''}|${rawReason}${resvTag}`,
     };
     await this.prisma.stockMovement.create({ data: dataSection });
+
+    // Emit real-time event for section stock adjustment (fire-and-forget)
+    try {
+      this.events.emitInventoryEvent(section?.branchId || '', productId, updated.qtyOnHand, rawReason || 'ADJUST', userId);
+    } catch {}
+
     return updated;
   }
 
@@ -494,6 +510,14 @@ export class InventoryService {
           },
         });
       }
+
+      // Emit real-time event for transfer (fire-and-forget)
+      try {
+        for (const it of items) {
+          this.events.emitInventoryEvent(from.branchId, it.productId, -1, 'TRANSFER', user?.id);
+        }
+      } catch {}
+
       return { status: 'ok' };
     });
   }

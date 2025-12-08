@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventsService } from '../events';
 
 interface CreatePriceListDto {
   name: string;
@@ -16,7 +17,10 @@ interface UpsertPriceEntryDto {
 
 @Injectable()
 export class PricingService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly events: EventsService,
+  ) {}
 
   async getEffectivePrices(branchId: string, sectionId?: string) {
     // Try section-scoped active list first, then branch-level active list
@@ -136,19 +140,35 @@ export class PricingService {
       },
     });
 
+    let result;
     if (existing) {
-      return this.prisma.priceEntry.update({
+      result = await this.prisma.priceEntry.update({
         where: { id: existing.id },
         data: { price: dto.price as any },
       });
+    } else {
+      result = await this.prisma.priceEntry.create({
+        data: {
+          priceListId: dto.priceListId,
+          productId: dto.productId,
+          price: dto.price as any,
+        },
+      });
     }
 
-    return this.prisma.priceEntry.create({
-      data: {
-        priceListId: dto.priceListId,
-        productId: dto.productId,
-        price: dto.price as any,
-      },
-    });
+    // Emit real-time event for price updated (fire-and-forget)
+    try {
+      this.events.emit({
+        type: 'price:updated',
+        branchId: pl.branchId,
+        payload: {
+          productId: dto.productId,
+          price: dto.price,
+          sectionId: pl.sectionId || null,
+        },
+      });
+    } catch {}
+
+    return result;
   }
 }
