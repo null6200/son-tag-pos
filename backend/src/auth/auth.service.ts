@@ -87,7 +87,19 @@ export class AuthService {
     // Seed settings for the chosen branch if missing
     if (branchId && desiredName) {
       try {
-        await this.prisma.setting.create({ data: { branchId, businessName: desiredName, currency: (dto as any).currency || 'USD' } as any });
+        const rawCurrency = (((dto as any).currency || 'USD') as string).trim();
+        let currency = rawCurrency;
+        if (typeof rawCurrency === 'string') {
+          const t = rawCurrency.trim();
+          if (/^ngn\b/i.test(t) || /naira/i.test(t) || t === '₦') currency = 'NGN';
+          else if (/^usd\b/i.test(t) || /dollar/i.test(t)) currency = 'USD';
+          else if (/^eur\b/i.test(t) || /euro/i.test(t)) currency = 'EUR';
+          else if (/^gbp\b/i.test(t) || /pound/i.test(t)) currency = 'GBP';
+          else currency = t.toUpperCase();
+        }
+        const symbolMap: Record<string, string> = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
+        const currencySymbol = symbolMap[currency] || currency;
+        await this.prisma.setting.create({ data: { branchId, businessName: desiredName, currency, currencySymbol } as any });
       } catch {}
     }
 

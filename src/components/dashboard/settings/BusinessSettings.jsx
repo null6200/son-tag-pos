@@ -14,8 +14,14 @@ import { toast } from '@/components/ui/use-toast';
 const timezones = [
   "Africa/Lagos", "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney"
 ];
+// Currency options: store concise ISO codes in settings / backend, but show friendly
+// labels with symbols in the dropdown. This prevents long strings like
+// "NGN - Nigeria Naira" from being used as the effective currency value.
 const currencies = [
-  "NGN - Nigeria Naira", "USD - US Dollar", "EUR - Euro", "GBP - British Pound"
+  { value: 'NGN', label: '₦ (Nigerian Naira)' },
+  { value: 'USD', label: '$ (US Dollar)' },
+  { value: 'EUR', label: '€ (Euro)' },
+  { value: 'GBP', label: '£ (British Pound)' },
 ];
 const months = [
   "January", "February", "March", "April", "May", "June", 
@@ -59,7 +65,18 @@ const BusinessSettings = ({ onBack, user }) => {
         if (!bid) return;
         const data = await api.settings.get({ branchId: bid });
         if (data) {
-          setSettings(prev => ({ ...prev, ...data, logo: data.logoUrl || '' }));
+          // Normalize any verbose currency label back to a simple ISO code so that
+          // the Select uses a short value (e.g. "NGN" instead of
+          // "NGN - Nigeria Naira").
+          let currency = data.currency || '';
+          if (typeof currency === 'string') {
+            const trimmed = currency.trim();
+            if (/^ngn\b/i.test(trimmed) || /naira/i.test(trimmed) || trimmed === '₦') currency = 'NGN';
+            else if (/^usd\b/i.test(trimmed) || /dollar/i.test(trimmed)) currency = 'USD';
+            else if (/^eur\b/i.test(trimmed) || /euro/i.test(trimmed)) currency = 'EUR';
+            else if (/^gbp\b/i.test(trimmed) || /pound/i.test(trimmed)) currency = 'GBP';
+          }
+          setSettings(prev => ({ ...prev, ...data, currency, logo: data.logoUrl || '' }));
           if (data.logoUrl) setLogoPreview(data.logoUrl);
         }
       } catch {
@@ -94,6 +111,10 @@ const BusinessSettings = ({ onBack, user }) => {
     e.preventDefault();
     try {
       const branchId = user?.branchId || resolvedBranchId || '';
+      // Derive a compact currency code + symbol from the selected value
+      const curCode = (settings.currency || '').trim() || 'NGN';
+      const symbolMap = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
+      const curSymbol = symbolMap[curCode] || curCode;
       let logoUrl = settings.logo || '';
       if (logoFile) {
         try {
@@ -107,20 +128,23 @@ const BusinessSettings = ({ onBack, user }) => {
         // branchId intentionally omitted when not available; backend will derive from auth user
         ...(branchId ? { branchId } : {}),
         businessName: settings.businessName,
-        currency: settings.currency,
+        currency: curCode,
+        currencySymbol: curSymbol,
         logoUrl,
       });
       // persist to localStorage for immediate UI update
       try {
         const s = await api.settings.get(branchId ? { branchId } : {});
+        const sCur = (s?.currency || curCode || 'NGN').trim();
+        const sSym = (s?.currencySymbol || curSymbol || '₦').trim();
         const info = {
           name: s?.businessName || settings.businessName,
           logoUrl: s?.logoUrl || logoUrl || '',
           address: s?.address || '',
           phone: s?.phone || '',
           email: s?.email || '',
-          currencySymbol: s?.currencySymbol || s?.currency || '₦',
-          currency: s?.currency || settings.currency || 'NGN',
+          currencySymbol: sSym || '₦',
+          currency: sCur || 'NGN',
           theme: s?.theme || undefined,
         };
         localStorage.setItem('businessInfo', JSON.stringify(info));
