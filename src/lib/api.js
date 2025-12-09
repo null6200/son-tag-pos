@@ -1,12 +1,13 @@
 function inferBaseUrl() {
-  // 0) Hard override for production Hostinger frontend: always use VPS API domain over HTTPS
+  // 0) Hard override for production frontends: always use VPS API domain over HTTPS
   try {
     if (typeof window !== 'undefined' && window.location) {
       const { hostname } = window.location;
-      // Support both old hostinger subdomain and new custom domain
+      // Support Hostinger, custom domain, and Netlify deployments
       if (hostname === 'lightgoldenrodyellow-quail-668841.hostingersite.com' ||
           hostname === 'stanfordelaze.com' ||
-          hostname === 'www.stanfordelaze.com') {
+          hostname === 'www.stanfordelaze.com' ||
+          hostname === 'son61.netlify.app') {
         return 'https://srv1183099.hstgr.cloud';
       }
     }
