@@ -5,6 +5,7 @@ import {
   OnGatewayDisconnect,
   SubscribeMessage,
 } from '@nestjs/websockets';
+import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 
 /**
@@ -36,11 +37,64 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  private connectedClients = new Map<string, { branchId?: string; userId?: string }>();
+  private connectedClients = new Map<string, { branchId?: string; userId?: string; authenticated?: boolean }>();
+
+  constructor(private readonly jwtService: JwtService) {}
 
   handleConnection(client: Socket) {
     console.log(`[WebSocket] Client connected: ${client.id}`);
-    this.connectedClients.set(client.id, {});
+    
+    // Attempt to authenticate via token in handshake
+    const token = this.extractToken(client);
+    let userId: string | undefined;
+    let authenticated = false;
+
+    if (token) {
+      try {
+        const payload = this.jwtService.verify(token);
+        userId = payload.sub || payload.userId || payload.id;
+        authenticated = true;
+        console.log(`[WebSocket] Client ${client.id} authenticated as user ${userId}`);
+      } catch (err) {
+        // Token invalid or expired - allow connection but mark as unauthenticated
+        // Client can still receive public events but won't be able to subscribe to branches
+        console.warn(`[WebSocket] Client ${client.id} auth failed:`, err.message);
+      }
+    } else {
+      console.log(`[WebSocket] Client ${client.id} connected without token (unauthenticated)`);
+    }
+
+    this.connectedClients.set(client.id, { userId, authenticated });
+  }
+
+  /**
+   * Extract JWT token from socket handshake (auth header, query param, or cookie)
+   */
+  private extractToken(client: Socket): string | null {
+    // 1. Check auth object (socket.io-client sends this via auth option)
+    const authToken = client.handshake?.auth?.token;
+    if (authToken) return authToken;
+
+    // 2. Check Authorization header
+    const authHeader = client.handshake?.headers?.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      return authHeader.slice(7);
+    }
+
+    // 3. Check query parameter
+    const queryToken = client.handshake?.query?.token;
+    if (queryToken && typeof queryToken === 'string') {
+      return queryToken;
+    }
+
+    // 4. Check cookies (access_token cookie)
+    const cookies = client.handshake?.headers?.cookie;
+    if (cookies) {
+      const match = cookies.match(/access_token=([^;]+)/);
+      if (match) return match[1];
+    }
+
+    return null;
   }
 
   handleDisconnect(client: Socket) {
@@ -51,20 +105,32 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   /**
    * Client subscribes to a specific branch's events.
    * This allows filtering so cashiers only receive events for their branch.
+   * Requires authentication - unauthenticated clients cannot subscribe.
    */
   @SubscribeMessage('subscribe:branch')
   handleSubscribeBranch(client: Socket, payload: { branchId: string; userId?: string }) {
     const { branchId, userId } = payload;
     if (!branchId) return { success: false, error: 'branchId required' };
 
+    // Check if client is authenticated
+    const clientData = this.connectedClients.get(client.id);
+    if (!clientData?.authenticated) {
+      console.warn(`[WebSocket] Unauthenticated client ${client.id} tried to subscribe to branch ${branchId}`);
+      return { success: false, error: 'Authentication required' };
+    }
+
     // Join the branch room
     const room = `branch:${branchId}`;
     client.join(room);
     
-    // Track client metadata
-    this.connectedClients.set(client.id, { branchId, userId });
+    // Track client metadata (preserve authenticated status)
+    this.connectedClients.set(client.id, { 
+      ...clientData,
+      branchId, 
+      userId: userId || clientData.userId 
+    });
     
-    console.log(`[WebSocket] Client ${client.id} subscribed to ${room}`);
+    console.log(`[WebSocket] Client ${client.id} (user: ${clientData.userId}) subscribed to ${room}`);
     return { success: true, room };
   }
 

@@ -366,14 +366,15 @@ model PriceEntry {
 
 // New: Payments linked to orders
 model Payment {
-  id        String   @id @default(uuid())
-  order     Order    @relation(fields: [orderId], references: [id])
-  orderId   String
-  method    String
-  amount    Decimal  @db.Decimal(12, 2)
-  reference String?
-  meta      Json?
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  order          Order    @relation(fields: [orderId], references: [id])
+  orderId        String
+  method         String
+  amount         Decimal  @db.Decimal(12, 2)
+  reference      String?
+  idempotencyKey String?  @unique // Prevents duplicate payments on retry
+  meta           Json?
+  createdAt      DateTime @default(now())
 }
 
 // Operating expenses per branch
@@ -469,11 +470,13 @@ model PurchasePayment {
 
 // Sales return (refunds) against orders
 model SalesReturn {
-  id        String   @id @default(uuid())
-  order     Order    @relation(fields: [orderId], references: [id])
-  orderId   String
-  amount    Decimal  @db.Decimal(12, 2)
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid())
+  order          Order    @relation(fields: [orderId], references: [id])
+  orderId        String
+  amount         Decimal  @db.Decimal(12, 2)
+  // Idempotency key to prevent duplicate refunds on retry
+  idempotencyKey String?  @unique
+  createdAt      DateTime @default(now())
 }
 
 // Purchase returns back to supplier
@@ -680,6 +683,8 @@ model Order {
   taxRate     Decimal?    @db.Decimal(5, 2)
   // Service type: Dine-in, Takeaway, etc.
   serviceType String?
+  // Idempotency key to prevent duplicate order creation on retry
+  idempotencyKey String? @unique
 
   items        OrderItem[]
   payments     Payment[]

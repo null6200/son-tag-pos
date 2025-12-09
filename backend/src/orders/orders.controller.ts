@@ -201,10 +201,11 @@ export class OrdersController {
   @UseGuards(PermissionsGuard)
   @Post(':id/refund')
   @Permissions('access_all_sale_returns')
-  async refund(@Param('id') id: string, @Body() body: { overrideOwnerId?: string }, @Req() req: any) {
+  async refund(@Param('id') id: string, @Body() body: { overrideOwnerId?: string; idempotencyKey?: string }, @Req() req: any) {
     const userId = req?.user?.userId as string | undefined;
     const overrideOwnerId = body?.overrideOwnerId as string | undefined;
-    return this.orders.refund(id, userId, overrideOwnerId);
+    const idempotencyKey = body?.idempotencyKey as string | undefined;
+    return this.orders.refund(id, userId, overrideOwnerId, idempotencyKey);
   }
 
   @UseGuards(PermissionsGuard)

@@ -1,4 +1,5 @@
 import { Module, Global } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { EventsGateway } from './events.gateway';
 import { EventsService } from './events.service';
 
@@ -10,6 +11,11 @@ import { EventsService } from './events.service';
  */
 @Global()
 @Module({
+  imports: [
+    JwtModule.register({
+      secret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || 'devsecret',
+    }),
+  ],
   providers: [EventsGateway, EventsService],
   exports: [EventsService],
 })

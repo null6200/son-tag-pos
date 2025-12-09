@@ -20,7 +20,34 @@ interface LoginDto {
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService, private jwt: JwtService, private audit: AuditService) {}
+  constructor(private prisma: PrismaService, private jwt: JwtService, private audit: AuditService) {
+    // Run cleanup on startup and every 6 hours
+    this.cleanupExpiredTokens();
+    setInterval(() => this.cleanupExpiredTokens(), 6 * 60 * 60 * 1000);
+  }
+
+  /**
+   * Remove expired and old revoked refresh tokens to prevent table bloat.
+   * Runs on startup and periodically.
+   */
+  private async cleanupExpiredTokens() {
+    try {
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+      const result = await this.prisma.refreshToken.deleteMany({
+        where: {
+          OR: [
+            { expiresAt: { lt: new Date() } }, // Expired tokens
+            { revoked: true, lastUsedAt: { lt: cutoff } }, // Old revoked tokens
+          ],
+        },
+      });
+      if (result.count > 0) {
+        console.log(`[AuthService] Cleaned up ${result.count} expired/revoked refresh tokens`);
+      }
+    } catch (err) {
+      console.error('[AuthService] Failed to cleanup expired tokens:', err);
+    }
+  }
 
   private static failures = new Map<string, { count: number; until?: number }>();
   private maxFailures() { return Number(process.env.LOGIN_MAX_FAILURES || 5); }

@@ -351,6 +351,20 @@ export class OrdersService {
   async create(dto: CreateOrderDto, userId?: string, overrideOwnerId?: string) {
     if (!dto.items?.length) throw new BadRequestException('No items');
 
+    // Idempotency check: if client provided an idempotencyKey, check if order already exists
+    const idempotencyKey = (dto as any).idempotencyKey || null;
+    if (idempotencyKey) {
+      const existing = await this.prisma.order.findUnique({ 
+        where: { idempotencyKey },
+        include: { items: true, payments: true }
+      });
+      if (existing) {
+        // Order already created - return existing (idempotent response)
+        console.log('[create] Idempotent hit - returning existing order:', idempotencyKey);
+        return existing;
+      }
+    }
+
     return this.prisma.$transaction(async (tx) => {
       // Resolve branchId if missing: from section -> earliest branch
       let resolvedBranchId: string | undefined = dto.branchId;
@@ -492,6 +506,7 @@ export class OrdersService {
             waiterId: dto.waiterId || null,
             waiterName: (dto as any).waiterName || waiterName,
             serviceType: dto.serviceType || null,
+            idempotencyKey: idempotencyKey,
           },
         });
       }
@@ -601,7 +616,9 @@ export class OrdersService {
             total: finalTotal,
           },
         });
-      } catch {}
+      } catch (err) {
+        console.error('[create] Failed to log audit entry:', err);
+      }
 
       // Enrich the initial CREATED_ORDER event with financial totals so the
       // Activities timeline can show status + amount for the first row.
@@ -866,7 +883,9 @@ export class OrdersService {
           actorUserId: actorUserId || null,
         },
       });
-    } catch {}
+    } catch (err) {
+      console.error('[logOverrideSuspend] Failed to log override event:', err);
+    }
   }
 
   // Update order totals (subtotal, tax, taxRate, discount, total) without changing status
@@ -889,7 +908,21 @@ export class OrdersService {
     return updated;
   }
 
-  async refund(orderId: string, actorUserId?: string, overrideOwnerId?: string) {
+  async refund(orderId: string, actorUserId?: string, overrideOwnerId?: string, idempotencyKey?: string) {
+    // Idempotency check: if client provided an idempotencyKey, check if refund already exists
+    if (idempotencyKey) {
+      const existing = await this.prisma.salesReturn.findUnique({ where: { idempotencyKey } });
+      if (existing) {
+        // Refund already processed - return current order state (idempotent response)
+        console.log('[refund] Idempotent hit - returning existing refund:', idempotencyKey);
+        const order = await this.prisma.order.findUnique({ 
+          where: { id: orderId }, 
+          include: { items: true, payments: true, salesReturns: true } 
+        });
+        return order;
+      }
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
       if (!order) throw new BadRequestException('Order not found');
@@ -946,7 +979,7 @@ export class OrdersService {
       // Create SalesReturn audit row for full amount
       const amount = Math.abs(Number(order.total as any || 0));
       if (amount > 0) {
-        await tx.salesReturn.create({ data: { orderId, amount: String(amount) as any } });
+        await tx.salesReturn.create({ data: { orderId, amount: String(amount) as any, idempotencyKey: idempotencyKey } });
       }
       // Mark order as REFUNDED
       const updated = await tx.order.update({ where: { id: orderId }, data: { status: 'REFUNDED' as any } });
@@ -976,7 +1009,9 @@ export class OrdersService {
           amount,
           type: 'FULL',
         }, actorUserId);
-      } catch {}
+      } catch (err) {
+        console.error('[refund] Failed to emit refund event:', err);
+      }
 
       // Optional override PIN audit for full refunds
       if (overrideOwnerId) {
@@ -998,7 +1033,9 @@ export class OrdersService {
               actorUserId: actorUserId || null,
             },
           });
-        } catch {}
+        } catch (err) {
+          console.error('[refund] Failed to log override audit:', err);
+        }
       }
 
       return updated;
@@ -1010,12 +1047,26 @@ export class OrdersService {
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.order.findUnique({ where: { id: orderId } });
       if (!order) throw new BadRequestException('Order not found');
+
+      // Idempotency check: if client provided an idempotencyKey, check if payment already exists
+      const idempotencyKey = (dto as any).idempotencyKey || null;
+      if (idempotencyKey) {
+        const existing = await tx.payment.findUnique({ where: { idempotencyKey } });
+        if (existing) {
+          // Payment already processed - return current order state (idempotent response)
+          console.log('[addPayment] Idempotent hit - returning existing payment:', idempotencyKey);
+          const result = await tx.order.findUnique({ where: { id: orderId }, include: { payments: true, items: true } as any });
+          return result;
+        }
+      }
+
       await tx.payment.create({
         data: {
           orderId,
           method: dto.method,
           amount: dto.amount as any,
           reference: dto.reference || null,
+          idempotencyKey: idempotencyKey,
         },
       });
       // After recording payment, backfill from latest draft and auto-mark PAID when fully paid
@@ -1133,7 +1184,9 @@ export class OrdersService {
           newStatus: newStatus,
           paid,
         }, actorUserId);
-      } catch {}
+      } catch (err) {
+        console.error('[addPayment] Failed to emit payment event:', err);
+      }
 
       return result;
     });

@@ -166,73 +166,156 @@ class ApiError extends Error {
 }
 
 const DEFAULT_TIMEOUT = 30000; // 30s
+const MAX_RETRIES = 2; // Retry up to 2 times for server errors (total 3 attempts)
+const RETRY_DELAY_BASE = 1000; // 1 second base delay, doubles each retry
 
-async function request(path, { method = 'GET', body, headers = {}, timeout = DEFAULT_TIMEOUT, _retried } = {}) {
-  const url = `${BASE_URL}/api${path}`;
-  try { console.debug('[api.request]', method, url, body ? '(body)' : ''); } catch {}
+// Request deduplication: prevent duplicate in-flight requests (e.g., double-clicks)
+// Only deduplicates mutating requests (POST/PUT/PATCH/DELETE) with identical path+body
+const pendingMutations = new Map();
 
-  // Setup timeout via AbortController
-  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-  let timeoutId;
-  if (controller && timeout > 0) {
-    timeoutId = setTimeout(() => controller.abort(), timeout);
-  }
-
-  // Resolve auth headers (supports async providers)
-  const authHeaders = await resolveAuthHeader();
-
-  let res;
+function getMutationKey(method, path, body) {
+  if (method === 'GET') return null; // Don't dedupe reads
   try {
-    res = await fetch(url, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/plain, */*',
-        ...authHeaders,
-        ...headers,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      credentials: 'include',
-      signal: controller ? controller.signal : undefined,
-    });
-  } catch (err) {
-    // Timeout or network error
-    if (err && err.name === 'AbortError') throw new Error('Request aborted (timeout)');
-    throw err;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    return `${method}:${path}:${JSON.stringify(body || {})}`;
+  } catch {
+    return `${method}:${path}`;
+  }
+}
+
+/**
+ * Sleep helper for retry backoff
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Check if an error is retryable (server errors, network errors)
+ */
+function isRetryableError(error) {
+  // Network errors (no response)
+  if (!error.status && (error.message?.includes('fetch') || error.message?.includes('network') || error.message?.includes('timeout'))) {
+    return true;
+  }
+  // Server errors (5xx)
+  if (error.status >= 500 && error.status < 600) {
+    return true;
+  }
+  // Rate limiting (429) - retry after backoff
+  if (error.status === 429) {
+    return true;
+  }
+  return false;
+}
+
+async function request(path, { method = 'GET', body, headers = {}, timeout = DEFAULT_TIMEOUT, _retried, _skipDedupe, _retryCount = 0 } = {}) {
+  // Deduplication: if an identical mutation is already in-flight, return its promise
+  const mutationKey = _skipDedupe ? null : getMutationKey(method, path, body);
+  if (mutationKey && pendingMutations.has(mutationKey)) {
+    try { console.debug('[api.request] Deduped:', method, path); } catch {}
+    return pendingMutations.get(mutationKey);
   }
 
-  if (!res.ok) {
-    // Auto refresh flow: for 401 responses, try to refresh tokens once, then retry original request
-    const expiredFlag = (() => { try { return (typeof window !== 'undefined') && (window.sessionStorage?.getItem('auth_expired') === '1' || new URL(window.location.href).searchParams.get('expired') === '1'); } catch { return false; } })();
-    if (res.status === 401 && !_retried && !expiredFlag) {
-      try {
-        const refreshRes = await fetch(`${BASE_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
-        if (refreshRes.ok) {
-          // Retry the original request once after successful refresh
-          return request(path, { method, body, headers: { ...headers }, timeout, _retried: true });
-        }
-        // Refresh failed: notify and redirect to sign-in
-        notifySessionExpired();
-      } catch {}
+  // Create the actual request promise
+  const requestPromise = (async () => {
+    const url = `${BASE_URL}/api${path}`;
+    try { console.debug('[api.request]', method, url, body ? '(body)' : '', _retryCount > 0 ? `(retry ${_retryCount})` : ''); } catch {}
+
+    // Setup timeout via AbortController
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    let timeoutId;
+    if (controller && timeout > 0) {
+      timeoutId = setTimeout(() => controller.abort(), timeout);
     }
-    let bodyText = '';
-    let parsed = null;
+
+    // Resolve auth headers (supports async providers)
+    const authHeaders = await resolveAuthHeader();
+
+    let res;
     try {
-      bodyText = await res.text();
-      try { parsed = JSON.parse(bodyText); } catch {}
-    } catch {}
-    throw new ApiError(res.status, parsed, bodyText || `Request failed: ${res.status}`);
+      res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/plain, */*',
+          ...authHeaders,
+          ...headers,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        credentials: 'include',
+        signal: controller ? controller.signal : undefined,
+      });
+    } catch (err) {
+      // Timeout or network error - check if retryable
+      if (timeoutId) clearTimeout(timeoutId);
+      const networkError = err && err.name === 'AbortError' 
+        ? new Error('Request aborted (timeout)') 
+        : err;
+      
+      // Retry network errors with backoff
+      if (_retryCount < MAX_RETRIES && isRetryableError(networkError)) {
+        const delay = RETRY_DELAY_BASE * Math.pow(2, _retryCount);
+        try { console.warn(`[api.request] Network error, retrying in ${delay}ms...`, networkError.message); } catch {}
+        await sleep(delay);
+        return request(path, { method, body, headers, timeout, _retried, _skipDedupe: true, _retryCount: _retryCount + 1 });
+      }
+      throw networkError;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    if (!res.ok) {
+      // Auto refresh flow: for 401 responses, try to refresh tokens once, then retry original request
+      const expiredFlag = (() => { try { return (typeof window !== 'undefined') && (window.sessionStorage?.getItem('auth_expired') === '1' || new URL(window.location.href).searchParams.get('expired') === '1'); } catch { return false; } })();
+      if (res.status === 401 && !_retried && !expiredFlag) {
+        try {
+          const refreshRes = await fetch(`${BASE_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
+          if (refreshRes.ok) {
+            // Retry the original request once after successful refresh (skip dedupe for retry)
+            return request(path, { method, body, headers: { ...headers }, timeout, _retried: true, _skipDedupe: true, _retryCount });
+          }
+          // Refresh failed: notify and redirect to sign-in
+          notifySessionExpired();
+        } catch {}
+      }
+      
+      let bodyText = '';
+      let parsed = null;
+      try {
+        bodyText = await res.text();
+        try { parsed = JSON.parse(bodyText); } catch {}
+      } catch {}
+      const apiError = new ApiError(res.status, parsed, bodyText || `Request failed: ${res.status}`);
+      
+      // Retry server errors (5xx) and rate limits (429) with backoff
+      if (_retryCount < MAX_RETRIES && isRetryableError(apiError)) {
+        const delay = RETRY_DELAY_BASE * Math.pow(2, _retryCount);
+        try { console.warn(`[api.request] Server error ${res.status}, retrying in ${delay}ms...`); } catch {}
+        await sleep(delay);
+        return request(path, { method, body, headers, timeout, _retried, _skipDedupe: true, _retryCount: _retryCount + 1 });
+      }
+      
+      throw apiError;
+    }
+
+    // No Content
+    if (res.status === 204) return null;
+
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('application/json')) return res.json();
+    if (contentType.includes('application/octet-stream') || contentType.includes('application/pdf') || contentType.includes('application/zip')) return res.blob();
+    return res.text();
+  })();
+
+  // Track mutation in-flight and clean up when done
+  if (mutationKey) {
+    pendingMutations.set(mutationKey, requestPromise);
+    requestPromise.finally(() => {
+      pendingMutations.delete(mutationKey);
+    });
   }
 
-  // No Content
-  if (res.status === 204) return null;
-
-  const contentType = (res.headers.get('content-type') || '').toLowerCase();
-  if (contentType.includes('application/json')) return res.json();
-  if (contentType.includes('application/octet-stream') || contentType.includes('application/pdf') || contentType.includes('application/zip')) return res.blob();
-  return res.text();
+  return requestPromise;
 }
 
 export const api = {
@@ -871,8 +954,10 @@ export const api = {
       if (taxRate !== undefined) body.taxRate = taxRate;
       return request(`/orders/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
-    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId } = {}) {
-      const body = { branchId, items };
+    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId, idempotencyKey } = {}) {
+      // Auto-generate idempotency key if not provided to prevent duplicate orders on retry
+      const key = idempotencyKey || `ord_${branchId || 'x'}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      const body = { branchId, items, idempotencyKey: key };
       if (sectionId) body.sectionId = sectionId;
       if (!sectionId && sectionName) body.sectionName = sectionName;
       if (payment) body.payment = payment;
@@ -895,11 +980,15 @@ export const api = {
       if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
       return request(`/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', body });
     },
-    addPayment(id, { method, amount, reference }) {
-      return request(`/orders/${encodeURIComponent(id)}/payments`, { method: 'POST', body: { method, amount, reference } });
+    addPayment(id, { method, amount, reference, idempotencyKey }) {
+      // Auto-generate idempotency key if not provided to prevent duplicate payments on retry
+      const key = idempotencyKey || `pay_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      return request(`/orders/${encodeURIComponent(id)}/payments`, { method: 'POST', body: { method, amount, reference, idempotencyKey: key } });
     },
-    refund(id, { overrideOwnerId } = {}) {
-      const body = {};
+    refund(id, { overrideOwnerId, idempotencyKey } = {}) {
+      // Auto-generate idempotency key if not provided to prevent duplicate refunds on retry
+      const key = idempotencyKey || `ref_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      const body = { idempotencyKey: key };
       if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
       return request(`/orders/${encodeURIComponent(id)}/refund`, { method: 'POST', body });
     },

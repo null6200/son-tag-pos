@@ -337,7 +337,9 @@ export class InventoryService {
     try {
       const s = await this.prisma.setting.findFirst({ where: { branchId }, select: { allowOverselling: true } });
       allowOverselling = !!s?.allowOverselling;
-    } catch {}
+    } catch (err) {
+      console.error('[adjust] Failed to check overselling setting:', err);
+    }
     const newQty = newQtyCandidate < 0 && allowOverselling ? newQtyCandidate : Math.max(newQtyCandidate, 0);
     if (newQtyCandidate < 0 && !allowOverselling) throw new NotFoundException('Insufficient stock');
 
@@ -361,7 +363,9 @@ export class InventoryService {
     // Emit real-time event for stock adjustment (fire-and-forget)
     try {
       this.events.emitInventoryEvent(branchId, productId, updated.qtyOnHand, (dto as any).reason || 'ADJUST', userId);
-    } catch {}
+    } catch (err) {
+      console.error('[adjust] Failed to emit inventory event:', err);
+    }
 
     return updated;
   }
@@ -389,7 +393,9 @@ export class InventoryService {
     try {
       const s = await this.prisma.setting.findFirst({ where: { branchId: section?.branchId || undefined }, select: { allowOverselling: true } });
       allowOverselling = !!s?.allowOverselling;
-    } catch {}
+    } catch (err) {
+      console.error('[adjustInSection] Failed to check overselling setting:', err);
+    }
     const newQty = newQtyCandidate < 0 && allowOverselling ? newQtyCandidate : Math.max(newQtyCandidate, 0);
     if (newQtyCandidate < 0 && !allowOverselling) throw new NotFoundException('Insufficient stock');
     const updated = await this.prisma.sectionInventory.update({
@@ -423,7 +429,9 @@ export class InventoryService {
     // Emit real-time event for section stock adjustment (fire-and-forget)
     try {
       this.events.emitInventoryEvent(section?.branchId || '', productId, updated.qtyOnHand, rawReason || 'ADJUST', userId);
-    } catch {}
+    } catch (err) {
+      console.error('[adjustInSection] Failed to emit inventory event:', err);
+    }
 
     return updated;
   }
@@ -516,7 +524,9 @@ export class InventoryService {
         for (const it of items) {
           this.events.emitInventoryEvent(from.branchId, it.productId, -1, 'TRANSFER', user?.id);
         }
-      } catch {}
+      } catch (err) {
+        console.error('[transfer] Failed to emit transfer events:', err);
+      }
 
       return { status: 'ok' };
     });
