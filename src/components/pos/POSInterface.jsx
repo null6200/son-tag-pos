@@ -2127,8 +2127,11 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
   const displayedProducts = products
     .filter(p => {
-        const resolved = (sectionPrices[p.id]?.[currentSectionName] ?? p.price);
-        return resolved !== undefined && resolved !== null;
+        // Always show products - price of 0 or undefined is valid (free items or price TBD)
+        // The resolved price will be calculated at display time
+        const resolved = sectionPrices[p.id]?.[currentSectionName] ?? sectionPrices[p.id]?.['default'] ?? p.price;
+        // Only filter out if explicitly marked as hidden (not based on price)
+        return resolved !== undefined && resolved !== null || p.price !== undefined;
     })
     .filter(p => {
         if (activeCategory === 'All') return true;
