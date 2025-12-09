@@ -42,6 +42,7 @@ import { SubcategoriesModule } from './subcategories/subcategories.module';
 import { DiscountsModule } from './discounts/discounts.module';
 import { UploadsController } from './uploads.controller';
 import { EventsModule } from './events';
+import { LoggerModule } from './common/logger.module';
 
 // Resolve the frontend dist folder at the project root in both dev and prod
 // Support multiple launch contexts: from project root, from backend/, and from backend/dist
@@ -63,6 +64,7 @@ const STATIC_MODULES = [
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    LoggerModule,
     ThrottlerModule.forRoot([
       {
         ttl: 60,

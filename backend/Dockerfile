@@ -1,4 +1,5 @@
-FROM node:20-slim
+# Stage 1: Build
+FROM node:20-slim AS builder
 
 # Install necessary build tools for native modules
 RUN apt-get update && \
@@ -7,19 +8,36 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# With compose build context=./backend, copy files from context root
 COPY package*.json ./
-# Install with devDependencies so Nest CLI is available for build
 RUN npm install --include=dev && npm install -g @nestjs/cli prisma@6.18.0
 COPY . ./
 
-# Generate Prisma Client at build time so engine binaries are bundled
+# Generate Prisma Client
 RUN prisma generate --schema=prisma/schema.prisma
 
-# Build (no DB access required here)
+# Build the application
 RUN nest build
+
+# Stage 2: Production
+FROM node:20-slim AS production
+
+# Install OpenSSL for Prisma (required at runtime)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy only production files
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
+
+# Create directories for uploads and logs
+RUN mkdir -p uploads logs
 
 EXPOSE 4000
 
-# Start the application (Prisma generate/migrate will run in Render postdeploy)
-CMD ["npm", "run", "start:prod"]
+# Run the compiled JavaScript directly (not through nest CLI)
+CMD ["node", "dist/main.js"]
