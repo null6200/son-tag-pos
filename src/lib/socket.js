@@ -100,7 +100,9 @@ export function getSocket() {
     });
 
     socket.on('disconnect', (reason) => {
-      console.log('[Socket] Disconnected:', reason);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[Socket] Disconnected:', reason);
+      }
       lastDisconnectedAt = Date.now();
       connectionState = 'disconnected';
       
@@ -111,7 +113,9 @@ export function getSocket() {
     });
 
     socket.on('reconnecting', (attemptNumber) => {
-      console.log('[Socket] Reconnecting, attempt:', attemptNumber);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[Socket] Reconnecting, attempt:', attemptNumber);
+      }
       connectionState = 'reconnecting';
       
       notifyConnectionStateChange({
@@ -121,7 +125,9 @@ export function getSocket() {
     });
 
     socket.on('reconnect_failed', () => {
-      console.error('[Socket] Reconnection failed after all attempts');
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[Socket] Reconnection failed after all attempts');
+      }
       connectionState = 'disconnected';
       
       notifyConnectionStateChange({
@@ -130,7 +136,10 @@ export function getSocket() {
     });
 
     socket.on('connect_error', (err) => {
-      console.warn('[Socket] Connection error:', err.message);
+      // Silently log - WebSocket is optional, don't spam console
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('[Socket] Connection error (optional feature):', err.message);
+      }
       
       notifyConnectionStateChange({
         state: 'error',

@@ -115,7 +115,8 @@ export class TablesService {
     // Authorization handled by PermissionsGuard at controller level
     const t = await this.prisma.table.findUnique({ where: { id }, include: { section: true } });
     if (!t) throw new NotFoundException('Table not found');
-    if (t.status !== 'locked') throw new BadRequestException('Not locked');
+    // Idempotent: if already unlocked/available, just return the table
+    if (t.status === 'available') return t;
     const updated = await this.prisma.table.update({
       where: { id },
       data: { status: 'available' },
