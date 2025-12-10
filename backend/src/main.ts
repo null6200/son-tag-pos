@@ -30,12 +30,14 @@ async function bootstrap() {
   // Global API prefix
   app.setGlobalPrefix('api');
 
-  // CORS allowlist from env ALLOWED_ORIGINS (comma-separated). Fall back to current dev host.
+  // CORS allowlist from env ALLOWED_ORIGINS (comma-separated). Always allow localhost for dev.
   const raw = process.env.ALLOWED_ORIGINS || '';
   const allowed = raw.split(',').map(s => s.trim()).filter(Boolean);
   app.enableCors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
+      // Always allow localhost origins for development
+      if (origin.includes('localhost') || origin.includes('127.0.0.1')) return cb(null, true);
       if (allowed.length === 0) return cb(null, true);
       if (allowed.includes(origin)) return cb(null, true);
       return cb(new Error('CORS not allowed'), false);
@@ -49,8 +51,23 @@ async function bootstrap() {
   // Structured request/response logger
   app.use(requestLoggerMiddleware);
 
-  // Global validation
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false, transform: true }));
+  // Debug: Log raw body for /status endpoints
+  app.use((req, res, next) => {
+    if (req.url?.includes('/status') && req.method === 'PATCH') {
+      console.log('[DEBUG /status] URL:', req.url);
+      console.log('[DEBUG /status] Method:', req.method);
+      console.log('[DEBUG /status] Body:', JSON.stringify(req.body));
+      console.log('[DEBUG /status] Headers Content-Type:', req.headers['content-type']);
+    }
+    next();
+  });
+
+  // Global validation - whitelist strips unknown properties, transform converts types
+  app.useGlobalPipes(new ValidationPipe({ 
+    whitelist: true, 
+    // forbidNonWhitelisted disabled - was causing issues with properly decorated DTOs
+    transform: true,
+  }));
 
   // Security headers & compression
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } } as any));

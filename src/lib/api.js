@@ -955,10 +955,8 @@ export const api = {
       if (taxRate !== undefined) body.taxRate = taxRate;
       return request(`/orders/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
-    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId, idempotencyKey } = {}) {
-      // Auto-generate idempotency key if not provided to prevent duplicate orders on retry
-      const key = idempotencyKey || `ord_${branchId || 'x'}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      const body = { branchId, items, idempotencyKey: key };
+    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId } = {}) {
+      const body = { branchId, items };
       if (sectionId) body.sectionId = sectionId;
       if (!sectionId && sectionName) body.sectionName = sectionName;
       if (payment) body.payment = payment;
@@ -981,15 +979,11 @@ export const api = {
       if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
       return request(`/orders/${encodeURIComponent(id)}/status`, { method: 'PATCH', body });
     },
-    addPayment(id, { method, amount, reference, idempotencyKey }) {
-      // Auto-generate idempotency key if not provided to prevent duplicate payments on retry
-      const key = idempotencyKey || `pay_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      return request(`/orders/${encodeURIComponent(id)}/payments`, { method: 'POST', body: { method, amount, reference, idempotencyKey: key } });
+    addPayment(id, { method, amount, reference }) {
+      return request(`/orders/${encodeURIComponent(id)}/payments`, { method: 'POST', body: { method, amount, reference } });
     },
-    refund(id, { overrideOwnerId, idempotencyKey } = {}) {
-      // Auto-generate idempotency key if not provided to prevent duplicate refunds on retry
-      const key = idempotencyKey || `ref_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      const body = { idempotencyKey: key };
+    refund(id, { overrideOwnerId } = {}) {
+      const body = {};
       if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
       return request(`/orders/${encodeURIComponent(id)}/refund`, { method: 'POST', body });
     },

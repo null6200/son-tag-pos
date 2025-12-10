@@ -7,9 +7,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: pos
     # SECURITY: Only expose to internal Docker network, not public internet
-    # Remove or comment out 'ports' to prevent external access
-    # ports:
-    #   - "127.0.0.1:5433:5432"  # Uncomment ONLY if you need local access
+    # For local development, expose port to localhost only
+    ports:
+      - "127.0.0.1:5433:5432"
     expose:
       - "5432"
     volumes:

@@ -112,9 +112,24 @@ const BusinessSettings = ({ onBack, user }) => {
     try {
       const branchId = user?.branchId || resolvedBranchId || '';
       // Derive a compact currency code + symbol from the selected value
-      const curCode = (settings.currency || '').trim() || 'NGN';
+      const rawCurrency = (settings.currency || '').trim() || 'NGN';
+      // Handle both code format (NGN) and label format (₦ (Nigerian Naira))
       const symbolMap = { NGN: '₦', USD: '$', EUR: '€', GBP: '£' };
-      const curSymbol = symbolMap[curCode] || curCode;
+      let curCode = rawCurrency.toUpperCase();
+      let curSymbol = symbolMap[curCode];
+      if (!curSymbol) {
+        // Try to extract symbol from label format like "₦ (Nigerian Naira)"
+        const match = rawCurrency.match(/^([^\s(]+)/);
+        if (match && match[1]) {
+          curSymbol = match[1];
+          // Reverse lookup to get code
+          const reverseMap = { '₦': 'NGN', '$': 'USD', '€': 'EUR', '£': 'GBP' };
+          curCode = reverseMap[curSymbol] || curCode;
+        } else {
+          curSymbol = '₦';
+          curCode = 'NGN';
+        }
+      }
       let logoUrl = settings.logo || '';
       if (logoFile) {
         try {

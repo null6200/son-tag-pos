@@ -129,7 +129,12 @@ class CreateOrderDto {
 }
 
 class UpdateOrderStatusDto {
+  @IsString()
+  @IsIn(['DRAFT','ACTIVE','PENDING_PAYMENT','SUSPENDED','PAID','CANCELLED','VOIDED','REFUNDED'])
   status!: OrderStatus;
+
+  @IsOptional()
+  @IsString()
   overrideOwnerId?: string;
 }
 
@@ -189,6 +194,9 @@ export class OrdersController {
   @Patch(':id/status')
   @Permissions('add_payment')
   async updateStatus(@Param('id') id: string, @Body() dto: UpdateOrderStatusDto, @Req() req: any) {
+    console.log('[updateStatus] Received body:', JSON.stringify(dto));
+    console.log('[updateStatus] Order ID:', id);
+    console.log('[updateStatus] DTO status:', dto?.status, 'type:', typeof dto?.status);
     const userId = req?.user?.userId as string | undefined;
     const overrideOwnerId = dto.overrideOwnerId as string | undefined;
     const updated = await this.orders.updateStatus(id, dto.status, false, userId);

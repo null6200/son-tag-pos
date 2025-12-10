@@ -21,6 +21,22 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('businessInfo') || 'null'); } catch { return null; }
   });
 
+  // Listen for businessInfo updates from other components
+  useEffect(() => {
+    const syncBusinessInfo = () => {
+      try {
+        const info = JSON.parse(localStorage.getItem('businessInfo') || 'null');
+        setBusinessInfo(info);
+      } catch {}
+    };
+    window.addEventListener('businessInfoUpdated', syncBusinessInfo);
+    window.addEventListener('storage', syncBusinessInfo);
+    return () => {
+      window.removeEventListener('businessInfoUpdated', syncBusinessInfo);
+      window.removeEventListener('storage', syncBusinessInfo);
+    };
+  }, []);
+
   // Ensure a new business starts with fresh local data
   // Preserve user-managed master data: categories, sub categories, brands
   // Also preserve cached products and stock by branch across refresh/login

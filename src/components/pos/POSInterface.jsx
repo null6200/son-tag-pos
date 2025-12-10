@@ -108,30 +108,44 @@ function applyTheme(name) {
   };
 }
 
+// Resolve the business currency symbol robustly
+function getCurrencySymbol() {
+  try {
+    const info = JSON.parse(localStorage.getItem('businessInfo') || '{}');
+    let sym = info?.currencySymbol || info?.currency || '₦';
+    // Map common currency codes/names to symbols
+    const s = String(sym).trim().toUpperCase();
+    if (/^NGN$|NAIRA|NIGERIA/i.test(s)) return '₦';
+    if (/^USD$|US\s*DOLLAR/i.test(s)) return '$';
+    if (/^EUR$|EURO/i.test(s)) return '€';
+    if (/^GBP$|POUND|STERLING/i.test(s)) return '£';
+    // If it's already a symbol (1-2 chars), use it directly
+    if (sym.length <= 2) return sym;
+    // Extract symbol from format like "₦ (Nigerian Naira)"
+    const match = String(sym).match(/^([^\s(]+)/);
+    if (match && match[1]) return match[1];
+    return '₦';
+  } catch { return '₦'; }
+}
+
 // Safe money formatter for numbers or numeric strings with business currency
 function fmt(v) {
   try {
-    const info = JSON.parse(localStorage.getItem('businessInfo') || '{}');
-    const code = info?.currency || info?.currencyCode || '';
-    const sym = info?.currencySymbol || '';
+    const sym = getCurrencySymbol();
     const n = Number(v);
-    if (!Number.isFinite(n)) return `${sym ? sym + ' ' : ''}0.00`;
-    if (code) {
-      try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(n); } catch {}
-    }
-    return `${sym ? sym + ' ' : ''}${formatAmount(n)}`;
+    if (!Number.isFinite(n)) return `${sym}0.00`;
+    return `${sym}${formatAmount(n)}`;
   } catch {
     const n = Number(v);
     return Number.isFinite(n) ? formatAmount(n) : '0.00';
   }
 }
 
+// ... rest of the code remains the same ...
 
 const defaultServiceTypes = ['Dine-in', 'Takeaway'];
 const customerTypes = ['Walk-in', 'Member', 'VIP', 'Corporate'];
-
 const categories = ['All'];
-
 
 const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLogout, shiftRegister, onShiftClose, draftToLoad, onClearDraftToLoad }) => {
   const [time, setTime] = useState(new Date());
@@ -171,7 +185,14 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [editingDraft, setEditingDraft] = useState(null);
   const [printData, setPrintData] = useState(null);
   const [reservationKey, setReservationKey] = useState(() => {
-    try { return `CART|${(crypto && crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2)}`; } catch { return `CART|${Math.random().toString(36).slice(2)}`; }
+    try {
+      // Persist reservationKey so cart items survive page refresh with same reservation
+      const saved = localStorage.getItem('posReservationKey');
+      if (saved) return saved;
+      const newKey = `CART|${(crypto && crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2)}`;
+      localStorage.setItem('posReservationKey', newKey);
+      return newKey;
+    } catch { return `CART|${Math.random().toString(36).slice(2)}`; }
   });
   const printRef = useRef();
   const cartRef = useRef(cart);
@@ -444,14 +465,10 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   useEffect(() => { sectionRef.current = currentSection; }, [currentSection]);
   useEffect(() => { reservationKeyRef.current = reservationKey; }, [reservationKey]);
 
-  useEffect(() => {
-    const handleBeforeUnload = () => { try { releaseReservations(); } catch {} };
-    try { window.addEventListener('beforeunload', handleBeforeUnload); } catch {}
-    return () => {
-      try { releaseReservations(); } catch {}
-      try { window.removeEventListener('beforeunload', handleBeforeUnload); } catch {}
-    };
-  }, []);
+  // NOTE: Do NOT release reservations on page unload/refresh.
+  // Cart persists in localStorage, so releasing stock on unload would cause
+  // stock to increase while cart items remain, leading to double-counting.
+  // Reservations are only released on explicit cart clear or void actions.
 
   const handleSettleSuspended = async (draft, method) => {
     try {
@@ -767,20 +784,21 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           // if prefs call fails, fall back to all branch sections
         }
         setBranchSections(filtered);
-        const current = String(currentSection || '').trim();
-        if (!current) {
-          const source = filtered.length ? filtered : (Array.isArray(sections) ? sections : []);
-          if (shiftRegister && shiftRegister.sectionId && source.some(s => String(s.id) === String(shiftRegister.sectionId))) {
-            setCurrentSection(shiftRegister.sectionId);
-          } else {
+        const source = filtered.length ? filtered : (Array.isArray(sections) ? sections : []);
+        // Always prioritize shiftRegister.sectionId when user selected a specific shift
+        if (shiftRegister && shiftRegister.sectionId && source.some(s => String(s.id) === String(shiftRegister.sectionId))) {
+          setCurrentSection(shiftRegister.sectionId);
+        } else {
+          const current = String(currentSection || '').trim();
+          if (!current) {
             const firstValidSection = (source || []).find(s => !String(s.name || '').toLowerCase().includes('store') && !String(s.name || '').toLowerCase().includes('kitchen'));
             setCurrentSection(firstValidSection ? firstValidSection.id : ((source && source[0]) ? source[0].id : ''));
-          }
-        } else {
-          // If currentSection is no longer allowed, reset to a valid one
-          if (!filtered.some(s => String(s.id) === current)) {
-            const fallback = filtered[0] || null;
-            setCurrentSection(fallback ? fallback.id : '');
+          } else {
+            // If currentSection is no longer allowed, reset to a valid one
+            if (!filtered.some(s => String(s.id) === current)) {
+              const fallback = filtered[0] || null;
+              setCurrentSection(fallback ? fallback.id : '');
+            }
           }
         }
       } catch {
@@ -797,9 +815,10 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
   // Load effective prices for the current section so product cards display prices
   useEffect(() => {
+    // Wait until branchSections is populated before refreshing
+    if (!currentSection || !branchSections?.length) return;
     (async () => {
       try {
-        if (!currentSection) return;
         const sec = (branchSections || []).find(s => s.id === currentSection);
         const sectionName = sec?.name || '';
         if (!sectionName) return;
@@ -834,16 +853,19 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
   // Ensure per-section stock and prices are refreshed whenever section or branch context changes
   useEffect(() => {
+    // Wait until branchSections is populated before refreshing
+    if (!currentSection || !branchSections?.length) return;
     (async () => {
       try { await refreshPricingAndStock(); } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSection, user?.branchId]);
+  }, [currentSection, user?.branchId, branchSections]);
 
   // Real-time: auto-refresh stock when inventory changes from other cashiers
-  useRealtime('inventory:updated', () => {
-    scheduleRefreshPricingAndStock(300);
-  }, { skipActorId: user?.id });
+  // Disabled: causes double-refresh on our own actions. Re-enable for multi-cashier.
+  // useRealtime('inventory:updated', () => {
+  //   scheduleRefreshPricingAndStock(300);
+  // }, { skipActorId: user?.id });
 
   // Real-time: auto-refresh tables when table status changes from other users
   useRealtime('table:status_changed', async () => {
@@ -1097,9 +1119,10 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           try { scheduleRefreshPricingAndStock(100); } catch {}
         })();
       } catch {}
+      // Only unlock table if it was actually locked (status === 'occupied')
       if (editingDraft && editingDraft.table) {
         updateTableStatus(editingDraft.table.id, 'available');
-      } else if (prevTable) {
+      } else if (prevTable && prevTable.status === 'occupied') {
         updateTableStatus(prevTable.id, 'available');
       }
       setCart([]);
@@ -1107,12 +1130,30 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       setSelectedTable(null);
       setCurrentService(serviceTypes[0] || '');
       setCurrentCustomer(customerTypes[0]);
+      // Generate new reservation key for next cart session
+      try {
+        const newKey = `CART|${(crypto && crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2)}`;
+        localStorage.setItem('posReservationKey', newKey);
+        setReservationKey(newKey);
+      } catch {}
     }
     if (action.type === 'void') {
-        setCart(cart.filter(item => item.id !== action.itemId));
+        const newCart = cart.filter(item => item.id !== action.itemId);
+        setCart(newCart);
+        // Unlock table if cart becomes empty, not editing a draft, and table was locked
+        if (newCart.length === 0 && !editingDraft && selectedTable && selectedTable.status === 'occupied') {
+          updateTableStatus(selectedTable.id, 'available');
+          setSelectedTable(null);
+        }
     }
     if (action.type === 'decrement') {
-        setCart(cart.map(item => item.id === action.itemId ? {...item, qty: Math.max(0, item.qty - 1)} : item).filter(item => item.qty > 0));
+        const newCart = cart.map(item => item.id === action.itemId ? {...item, qty: Math.max(0, item.qty - 1)} : item).filter(item => item.qty > 0);
+        setCart(newCart);
+        // Unlock table if cart becomes empty, not editing a draft, and table was locked
+        if (newCart.length === 0 && !editingDraft && selectedTable && selectedTable.status === 'occupied') {
+          updateTableStatus(selectedTable.id, 'available');
+          setSelectedTable(null);
+        }
     }
     if (action.type === 'edit_discount') {
       setIsDiscountModalOpen(true);
@@ -1397,7 +1438,14 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           toast({ title: 'Stock restore failed', description: String(e?.message || 'Could not restore stock.'), variant: 'destructive' });
           return;
         }
-        setCart(cart.map(ci => ci.id === id ? { ...ci, qty: Math.max(0, ci.qty - 1) } : ci).filter(ci => ci.qty > 0));
+        const newCart = cart.map(ci => ci.id === id ? { ...ci, qty: Math.max(0, ci.qty - 1) } : ci).filter(ci => ci.qty > 0);
+        setCart(newCart);
+        // Unlock table if cart becomes empty, not editing a draft, and table was locked
+        if (newCart.length === 0 && !editingDraft && selectedTable && selectedTable.status === 'occupied') {
+          await updateTableStatus(selectedTable.id, 'available');
+          setSelectedTable(null);
+          toast({ title: 'Table released', description: `${selectedTable.name} is now available.` });
+        }
         // Refresh from backend to get authoritative stock counts
         scheduleRefreshPricingAndStock(100);
       });
@@ -1480,7 +1528,14 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         toast({ title: 'Stock restore failed', description: String(e?.message || 'Could not restore stock.'), variant: 'destructive' });
         return;
       }
-      setCart(cart.filter(ci => ci.id !== id));
+      const newCart = cart.filter(ci => ci.id !== id);
+      setCart(newCart);
+      // Unlock table if cart becomes empty, not editing a draft, and table was locked
+      if (newCart.length === 0 && !editingDraft && selectedTable && selectedTable.status === 'occupied') {
+        await updateTableStatus(selectedTable.id, 'available');
+        setSelectedTable(null);
+        toast({ title: 'Table released', description: `${selectedTable.name} is now available.` });
+      }
       // Refresh from backend to get authoritative stock counts
       scheduleRefreshPricingAndStock(100);
     });
@@ -1598,11 +1653,15 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
     setCart([]);
     setEditingDraft(null);
-    setSelectedTable(null);
+    // Don't clear selectedTable here - the table should remain locked for the draft
+    // The table will be cleared when the draft is loaded or sold
     setCurrentService(serviceTypes[0] || defaultServiceTypes[0]);
     setCurrentCustomer(customerTypes[0]);
     setDiscount({ type: 'percentage', value: 0 });
+    // Fetch drafts first to ensure draftTableIds is updated before the auto-unlock useEffect runs
     try { await fetchDrafts(draftsPage); } catch {}
+    // Now safe to clear selectedTable since the draft with this table is in the list
+    setSelectedTable(null);
   };
 
   const handleLoadDraft = async (draft) => {
@@ -2839,23 +2898,9 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
                 key={table.id} 
                 onSelect={async () => {
                   if (!isDineIn) return;
-                  try {
-                    // Optimistically set selection to avoid add-to-cart race
-                    setSelectedTable({ ...table, status: 'occupied' });
-                    const ok = await updateTableStatus(table.id, 'occupied');
-                    if (ok) {
-                      if (typeof markTableStatus === 'function') {
-                        try { markTableStatus(table.id, 'occupied'); } catch {}
-                      }
-                      toast({ title: `Table ${table.name} locked.` });
-                    } else {
-                      setSelectedTable(null);
-                      toast({ title: `Could not lock ${table.name}`, description: 'Please choose another table.', variant: 'destructive' });
-                    }
-                  } catch (e) {
-                    setSelectedTable(null);
-                    toast({ title: `Could not lock ${table.name}`, description: String(e?.message || e), variant: 'destructive' });
-                  }
+                  // Only select the table locally; lock will happen when first item is added to cart
+                  setSelectedTable(table);
+                  toast({ title: `Table ${table.name} selected.`, description: 'Table will be locked when you add items.' });
                 }}
                 disabled={!isDineIn || (table.status === 'occupied' && (!editingDraft || editingDraft.table?.id !== table.id))}
               >

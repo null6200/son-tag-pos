@@ -257,8 +257,18 @@ const getCurrencySymbol = () => {
   try {
     const info = JSON.parse(localStorage.getItem('businessInfo') || '{}');
     let sym = info?.currencySymbol || info?.currency || '₦';
-    if (/ngn|nigeria/i.test(String(sym))) sym = '₦';
-    return sym;
+    // Map common currency codes/names to symbols
+    const s = String(sym).trim().toUpperCase();
+    if (/^NGN$|NAIRA|NIGERIA/i.test(s)) return '₦';
+    if (/^USD$|US\s*DOLLAR/i.test(s)) return '$';
+    if (/^EUR$|EURO/i.test(s)) return '€';
+    if (/^GBP$|POUND|STERLING/i.test(s)) return '£';
+    // If it's already a symbol (1-2 chars), use it directly
+    if (sym.length <= 2) return sym;
+    // Extract symbol from format like "₦ (Nigerian Naira)"
+    const match = String(sym).match(/^([^\s(]+)/);
+    if (match && match[1]) return match[1];
+    return '₦';
   } catch { return '₦'; }
 };
 
