@@ -2170,6 +2170,10 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       toast({ title: 'Empty Cart', description: 'Cannot print a bill for an empty cart.', variant: 'destructive' });
       return;
     }
+    if (!hasPermission(userPermissions, 'print_invoice')) {
+      toast({ title: 'Not allowed', description: 'You do not have permission to print bills.', variant: 'destructive' });
+      return;
+    }
     const staffMember = serviceStaffList.find(s => s.id === selectedStaff);
     const waiterName = (staffMember && staffMember.username)
       || (editingDraft && editingDraft.waiter)
@@ -2335,6 +2339,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             draftCount={drafts.filter(d => !(d.isSuspended || String(d.status || '').toUpperCase() === 'SUSPENDED')).length}
             editingDraft={editingDraft}
             onPrintBill={handlePrintBill}
+            canPrintBill={hasPermission(userPermissions, 'print_invoice')}
             canAcceptPayment={hasAny(userPermissions, ['add_payment'])}
             serviceStaffList={serviceStaffList}
             selectedStaff={selectedStaff}
@@ -2871,7 +2876,7 @@ const ProductCard = ({ product, stock, stockReady, price, onAdd, allowOversellin
   );
 };
 
-const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrintItem, subtotal = 0, discountValue = 0, tax = 0, total = 0, currentSection, setCurrentSection, branchSections = [], currentService = '', setCurrentService, currentCustomer = '', setCurrentCustomer, customerOptions = [], selectedTable = null, setSelectedTable, onClearCart, tables = [], updateTableStatus, onSaveDraft, onViewDrafts, onOpenCashDrawer, onTakePayment, draftCount = 0, editingDraft = null, onPrintBill, canAcceptPayment = true, serviceStaffList = [], selectedStaff = null, setSelectedStaff, onPrintByCategory, onViewSalesHistory, onEditDiscount, onEditTax, taxRate = 0, serviceTypes = [], currencySymbol = '₦' }) => {
+const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrintItem, subtotal = 0, discountValue = 0, tax = 0, total = 0, currentSection, setCurrentSection, branchSections = [], currentService = '', setCurrentService, currentCustomer = '', setCurrentCustomer, customerOptions = [], selectedTable = null, setSelectedTable, onClearCart, tables = [], updateTableStatus, onSaveDraft, onViewDrafts, onOpenCashDrawer, onTakePayment, draftCount = 0, editingDraft = null, onPrintBill, canPrintBill = true, canAcceptPayment = true, serviceStaffList = [], selectedStaff = null, setSelectedStaff, onPrintByCategory, onViewSalesHistory, onEditDiscount, onEditTax, taxRate = 0, serviceTypes = [], currencySymbol = '₦' }) => {
   const isDineIn = /dine/i.test(String(currentService || '').trim());
   const [editQty, setEditQty] = useState({});
   return (
@@ -3034,7 +3039,15 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
       </div>
       <div className="flex gap-1">
         <Button size="sm" variant="destructive" className="flex-1 h-8 text-xs" onClick={onClearCart}><Trash2 className="w-3 h-3 mr-1"/> Clear</Button>
-        <Button size="sm" className="flex-1 h-8 text-xs" onClick={onPrintBill}><Printer className="w-3 h-3 mr-1"/> Bill</Button>
+        <Button
+          size="sm"
+          className="flex-1 h-8 text-xs"
+          onClick={onPrintBill}
+          disabled={!canPrintBill}
+          title={!canPrintBill ? "You do not have permission to print bills" : "Print Bill"}
+        >
+          <Printer className="w-3 h-3 mr-1"/> Bill
+        </Button>
         <Button 
           className="flex-1 h-8 text-xs bg-accent hover:bg-accent/90 text-accent-foreground font-bold" 
           onClick={() => onTakePayment('cash')}
