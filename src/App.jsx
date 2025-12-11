@@ -9,6 +9,21 @@ import RegisterPage from '@/pages/RegisterPage';
 import { api, setAuthProvider } from '@/lib/api';
 import { subscribeToBranch, unsubscribeFromBranch } from '@/lib/socket';
 
+function isRealtimeEnabled() {
+  try {
+    const env = typeof import.meta !== 'undefined' ? (import.meta.env || {}) : {};
+
+    if (typeof env.VITE_ENABLE_REALTIME !== 'undefined') {
+      return String(env.VITE_ENABLE_REALTIME).toLowerCase() === 'true';
+    }
+
+    if (env.DEV === true) return true;
+    if (env.PROD === true) return false;
+  } catch {}
+
+  return true;
+}
+
 export default function App() {
   const [view, setView] = useState('landing'); // 'landing', 'login', 'register', 'dashboard'
   const [currentUser, setCurrentUser] = useState(null);
@@ -134,9 +149,8 @@ export default function App() {
     setAuthProvider(() => authToken || null);
   }, [authToken]);
 
-  // Real-time WebSocket subscription: connect when user is logged in
-  // This enables instant updates when other cashiers make changes
   useEffect(() => {
+    if (!isRealtimeEnabled()) return undefined;
     if (!currentUser?.id) return;
     const branchId = currentUser?.branchId || currentUser?.branch?.id;
     if (branchId) {
