@@ -543,8 +543,11 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
   // Do not persist drafts to localStorage; backend is the source of truth
 
+  const ENABLE_TABLE_AUTO_RECONCILE = false;
+
   // Reconcile tables with drafts: unlock tables that are marked occupied but have no draft
   useEffect(() => {
+    if (!ENABLE_TABLE_AUTO_RECONCILE) return;
     (async () => {
       try {
         if (!currentSection) return;
@@ -565,6 +568,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       } catch {}
     })();
   }, [tables, drafts, currentSection, selectedTable?.id, editingDraft?.table?.id]);
+
   const [lastOverrideAt, setLastOverrideAt] = useState(null);
   const [lastOverrideBy, setLastOverrideBy] = useState(null);
   const [isSalesHistoryOpen, setIsSalesHistoryOpen] = useState(false);
