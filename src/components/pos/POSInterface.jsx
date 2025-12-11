@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+
 import { motion } from 'framer-motion';
 import { Search, Plus, Minus, X, Wifi, WifiOff, Sun, Moon, Bell, Coffee, Wallet, Trash2, ChevronDown, ArrowLeft, Eye, DollarSign, Info, FileText, FolderOpen, CreditCard, Landmark, Layers, Printer, User as UserIcon, ChefHat, Beer, LogOut, Download, Pencil, Image, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -106,7 +107,28 @@ function applyTheme(name) {
       '--pos-background': '0 0% 100%',
     },
   };
+
+  const theme = THEMES[name] || THEMES.light;
+  try {
+    Object.entries(theme).forEach(([key, value]) => {
+      root.style.setProperty(key, value);
+    });
+  } catch {}
 }
+
+function isRealtimeFeatureEnabled() {
+  try {
+    const env = typeof import.meta !== 'undefined' ? (import.meta.env || {}) : {};
+    if (typeof env.VITE_ENABLE_REALTIME !== 'undefined') {
+      return String(env.VITE_ENABLE_REALTIME).toLowerCase() === 'true';
+    }
+    if (env.DEV === true) return true;
+    if (env.PROD === true) return false;
+  } catch {}
+  return true;
+}
+
+const REALTIME_FEATURE_ENABLED = isRealtimeFeatureEnabled();
 
 // Resolve the business currency symbol robustly
 function getCurrencySymbol() {
@@ -933,6 +955,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     const loadTables = async () => {
       try {
         if (!currentSection) return;
+
         const rows = await api.tables.list({ sectionId: currentSection });
         const mapped = (rows || []).map(t => ({
           id: t.id,
@@ -951,7 +974,44 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   }, [currentSection]);
 
   useEffect(() => {
+    if (REALTIME_FEATURE_ENABLED) return;
+    if (!currentSection) return;
+
+    let cancelled = false;
+    const intervalMs = 5000;
+
+    const poll = async () => {
+      try {
+        if (cancelled || !currentSection) return;
+        const rows = await api.tables.list({ sectionId: currentSection });
+        const mapped = (rows || []).map(t => ({
+          id: t.id,
+          name: t.name || t.code || t.id,
+          sectionId: t.sectionId || t.section?.id || t.section,
+          sectionName: t.section?.name || '',
+          status: ((String(t.status || '').toLowerCase() === 'locked') || (String(t.status || '').toLowerCase() === 'occupied') || !!t.locked) ? 'occupied' : 'available',
+          updatedAt: t.updatedAt || t.updated_at || null,
+        }));
+        setTables(mapped);
+      } catch {}
+
+      try {
+        if (cancelled) return;
+        await refreshPricingAndStock();
+      } catch {}
+    };
+
+    poll();
+    const id = setInterval(poll, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [currentSection, user?.branchId, branchSections]);
+
+  useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
+
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
