@@ -10,7 +10,9 @@ import { onPosEvent, subscribeToBranch, unsubscribeFromBranch, isConnected } fro
  * @param {string|string[]} eventTypes - Event type(s) to listen for
  * @param {function} callback - Function to call when event is received
  * @param {object} options - Optional configuration
- * @param {boolean} options.enabled - Whether to enable the subscription (default: true)
+ * @param {boolean} options.enabled - Whether to enable the subscription. Defaults are:
+ *   - In development: enabled by default
+ *   - In production: disabled by default unless VITE_ENABLE_REALTIME=true
  * @param {string} options.skipActorId - Skip events from this user ID (to avoid self-updates)
  * 
  * @example
@@ -25,8 +27,34 @@ import { onPosEvent, subscribeToBranch, unsubscribeFromBranch, isConnected } fro
  *   refetchInventory();
  * }, { skipActorId: currentUser.id });
  */
+
+// Determine sensible default for realtime based on build/runtime environment.
+// - In development (Vite dev server), enable realtime by default.
+// - In production builds (Netlify, etc.), disable by default unless
+//   VITE_ENABLE_REALTIME is explicitly set to 'true'.
+function getDefaultRealtimeEnabled() {
+  try {
+    // Vite-style env for frontend builds
+    const env = typeof import.meta !== 'undefined' ? (import.meta.env || {}) : {};
+
+    if (typeof env.VITE_ENABLE_REALTIME !== 'undefined') {
+      return String(env.VITE_ENABLE_REALTIME).toLowerCase() === 'true';
+    }
+
+    if (env.DEV === true) return true;
+    if (env.PROD === true) return false;
+  } catch {
+    // Ignore env probing errors and fall through to fallback
+  }
+
+  // Fallback: enable (e.g., tests or non-Vite environments)
+  return true;
+}
+
+const REALTIME_DEFAULT_ENABLED = getDefaultRealtimeEnabled();
+
 export function useRealtime(eventTypes, callback, options = {}) {
-  const { enabled = true, skipActorId } = options;
+  const { enabled = REALTIME_DEFAULT_ENABLED, skipActorId } = options;
   const callbackRef = useRef(callback);
   
   // Keep callback ref updated
