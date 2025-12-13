@@ -11,10 +11,19 @@ import { Label } from '@/components/ui/label';
 const ServiceStaffPinModal = ({ open, mode = 'setup', onClose, onSave, onVerify, existingPins = [] }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
-    if (!open) { setPin(''); setError(''); }
+    if (!open) { setPin(''); setError(''); setIsVerifying(false); }
   }, [open]);
+
+  // Auto-verify when 3 digits are entered in verify mode
+  useEffect(() => {
+    if (mode === 'verify' && /^\d{3}$/.test(pin) && !isVerifying && onVerify) {
+      setIsVerifying(true);
+      onVerify(pin);
+    }
+  }, [pin, mode]);
 
   const isThreeDigits = (v) => /^\d{3}$/.test(v);
   const isUnique = useMemo(() => {
@@ -56,7 +65,7 @@ const ServiceStaffPinModal = ({ open, mode = 'setup', onClose, onSave, onVerify,
               inputMode="numeric"
               autoComplete="one-time-code"
               value={pin}
-              onChange={(e) => { setPin(e.target.value.replace(/[^0-9]/g, '').slice(0,3)); setError(''); }}
+              onChange={(e) => { setPin(e.target.value.replace(/[^0-9]/g, '').slice(0,3)); setError(''); setIsVerifying(false); }}
               placeholder="•••"
               className="col-span-3 text-center tracking-widest"
             />

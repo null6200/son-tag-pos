@@ -259,7 +259,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [autoSelectLoggedInAsServiceStaff, setAutoSelectLoggedInAsServiceStaff] = useState(false);
   const [isServicePinModalOpen, setServicePinModalOpen] = useState(false);
   const [pendingStaffId, setPendingStaffId] = useState(null);
-  const [protectedActions, setProtectedActions] = useState(['decrement', 'void', 'delete_draft', 'approve_credit_sale']);
+  const [protectedActions, setProtectedActions] = useState(['decrement', 'void', 'delete_draft', 'approve_credit_sale', 'clear_cart']);
   const [graceSeconds, setGraceSeconds] = useState(0);
   const [isOverrideOpen, setOverrideOpen] = useState(false);
   const [pendingOverride, setPendingOverride] = useState(null); // { type, payload, onApproved }
@@ -1402,10 +1402,12 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     try {
       if (!staffId) { throw new Error('No staff selected'); }
       const res = await api.users.verifyPin({ userId: staffId, pin });
-      if (!res || res.ok !== true) { throw new Error('Invalid PIN'); }
+      // Accept various success response formats: { ok: true }, { valid: true }, { success: true }, or truthy response
+      const isValid = res && (res.ok === true || res.valid === true || res.success === true || res === true);
+      if (!isValid) { throw new Error('Invalid PIN'); }
       setSelectedStaff(staffId);
       const name = serviceStaffList.find(s => s.id === staffId)?.username;
-      if (name) toast({ title: 'Service staff selected', description: name });
+      toast({ title: 'Service staff selected', description: name || 'Staff verified successfully' });
       // Close on success
       setServicePinModalOpen(false);
       setPendingStaffId(null);
@@ -1432,7 +1434,8 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         res = await api.hrm.overridePin.verify({ branchId: resolvedBranchId, pin });
       }
       
-      if (!res || res.ok !== true) {
+      const isValid = res && (res.ok === true || res.valid === true || res.success === true || res === true);
+      if (!isValid) {
         throw new Error('Invalid PIN');
       }
       const action = pendingOverride;
@@ -1645,7 +1648,15 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       updatedDrafts = drafts.map(d => d.id === editingDraft.id ? { ...d, ...draftData, updatedAt: new Date().toISOString() } : d);
       toast({ title: 'Draft Updated!', description: `Draft "${editingDraft.name}" has been updated.` });
     } else {
-      const draftName = `Draft #${drafts.length + 1}`;
+      // Find the highest draft number to ensure accurate sequential numbering
+      const existingNumbers = drafts
+        .map(d => {
+          const match = d.name?.match(/^Draft #(\d+)$/);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter(n => n > 0);
+      const nextNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+      const draftName = `Draft #${nextNumber}`;
       const newDraft = { id: Date.now(), name: draftName, ...draftData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       updatedDrafts = [...drafts, newDraft];
       toast({ title: 'Draft Saved!', description: `"${draftName}" has been saved.` });
@@ -1701,19 +1712,6 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         }
       }
     }
-
-    handlePrint('table-bill', {
-      items: cart,
-      table: selectedTable?.name,
-      subtotal,
-      discount: discountValue,
-      tax,
-      total,
-      waiter: draftData.waiter,
-      branch: user?.branch || '',
-      section: branchSections.find(s => s.id === currentSection)?.name,
-      isDraft: true,
-    });
 
     setCart([]);
     setEditingDraft(null);
@@ -2194,6 +2192,15 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       serviceType: currentService,
       isDraft: false,
     });
+
+    // Clear cart after printing bill and reset service staff
+    setCart([]);
+    setEditingDraft(null);
+    setSelectedTable(null);
+    setSelectedStaff(null);
+    setCurrentService(serviceTypes[0] || defaultServiceTypes[0]);
+    setCurrentCustomer(customerTypes[0]);
+    setDiscount({ type: 'percentage', value: 0 });
   };
 
   const handleReprint = async (sale) => {
@@ -2328,7 +2335,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             customerOptions={customerOptions}
             selectedTable={selectedTable}
             setSelectedTable={setSelectedTable}
-            onClearCart={() => handlePinRequest({ type: 'clear_cart' })}
+            onClearCart={() => requireOverride('clear_cart', {}, () => handlePinSuccess({ type: 'clear_cart' }))}
             tables={tables}
             updateTableStatus={updateTableStatus}
             markTableStatus={markTableStatus}

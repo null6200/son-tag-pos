@@ -17,6 +17,7 @@ const OverridePinModal = ({ open, onClose, onConfirm, title = 'Override Required
   const [selectedUserId, setSelectedUserId] = useState('');
   const [overrideUsers, setOverrideUsers] = useState([]);
   const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   // Fetch users with override roles (admin, accountant, manager, supervisor) when modal opens
   useEffect(() => {
@@ -55,11 +56,21 @@ const OverridePinModal = ({ open, onClose, onConfirm, title = 'Override Required
     if (!open) {
       setPin('');
       setSelectedUserId('');
+      setIsVerifying(false);
     }
   }, [open]);
 
   // Determine which users list to display
   const displayUsers = (users && users.length > 0) ? users : overrideUsers;
+
+  // Auto-verify when user is selected and 5-digit PIN is entered
+  useEffect(() => {
+    if (selectedUserId && /^\d{5}$/.test(pin) && !isVerifying && onConfirm) {
+      setIsVerifying(true);
+      const selectedUser = (displayUsers || []).find(u => u.id === selectedUserId);
+      onConfirm({ userId: selectedUserId, pin, userName: selectedUser?.name || selectedUser?.username || '' });
+    }
+  }, [pin, selectedUserId]);
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -84,9 +95,10 @@ const OverridePinModal = ({ open, onClose, onConfirm, title = 'Override Required
           </div>
           <Input
             type="password"
+            inputMode="numeric"
             value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            placeholder="Enter PIN"
+            onChange={(e) => { setPin(e.target.value.replace(/[^0-9]/g, '').slice(0, 5)); setIsVerifying(false); }}
+            placeholder="•••••"
             className="text-center tracking-widest"
           />
         </div>
