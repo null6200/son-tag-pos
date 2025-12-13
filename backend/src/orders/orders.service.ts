@@ -821,10 +821,8 @@ export class OrdersService {
         // no financial backfill needed here; just ensure unlink happens below
       }
 
-      // On PAID or SUSPENDED (and other non-locking we care about), unlink the table from the order to make tables stateless
-      if (['PAID','SUSPENDED'].includes(status as any)) {
-        data.tableId = null as any;
-      }
+      // NOTE: We no longer clear tableId on PAID/SUSPENDED - table info should be preserved
+      // for historical/reporting purposes. Table availability is managed separately.
       const prevTotal = Number((order as any).total ?? 0);
       const updated = await tx.order.update({ where: { id: orderId }, data });
 
