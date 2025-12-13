@@ -546,16 +546,24 @@ export class OrdersService {
         }
       }
 
+      const updateData = {
+        total: String(finalTotal) as any,
+        subtotal: String(isNaN(sub) ? 0 : sub) as any,
+        discount: String(isNaN(disc) ? 0 : disc) as any,
+        tax: String(isNaN(txAmt) ? 0 : txAmt) as any,
+        taxRate: txRate !== null && !isNaN(txRate) ? (String(txRate) as any) : undefined,
+        status: effectiveStatus as any,
+        // Always update these fields when reusing an order to ensure current POS state is persisted
+        ...(dto.tableId ? { tableId: dto.tableId } : {}),
+        ...(dto.serviceType ? { serviceType: dto.serviceType } : {}),
+        ...(dto.sectionId ? { sectionId: dto.sectionId } : {}),
+        ...(dto.waiterId ? { waiterId: dto.waiterId } : {}),
+        ...(waiterName ? { waiterName: waiterName as any } : {}),
+      };
+
       await tx.order.update({
         where: { id: order.id },
-        data: {
-          total: String(finalTotal) as any,
-          subtotal: String(isNaN(sub) ? 0 : sub) as any,
-          discount: String(isNaN(disc) ? 0 : disc) as any,
-          tax: String(isNaN(txAmt) ? 0 : txAmt) as any,
-          taxRate: txRate !== null && !isNaN(txRate) ? (String(txRate) as any) : undefined,
-          status: effectiveStatus as any,
-        },
+        data: updateData,
       });
 
       // optional payment persistence
@@ -770,11 +778,12 @@ export class OrdersService {
           const dDisc = draft.discount !== null && draft.discount !== undefined ? Number(draft.discount as any) : null;
           const dTotal = draft.total !== null && draft.total !== undefined ? Number(draft.total as any) : null;
 
-          // Prefer draft values when present; otherwise keep order values
-          const sub = dSub != null ? dSub : ordSub;
-          const tax = dTax != null ? dTax : ordTax;
-          const disc = dDisc != null ? dDisc : ordDisc;
-          const finalTotal = dTotal != null ? dTotal : (sub + tax - disc);
+          // Prefer ORDER values when present (order may have been updated with current POS state);
+          // only fall back to draft values if order values are missing/zero
+          const sub = ordSub > 0 ? ordSub : (dSub != null ? dSub : 0);
+          const tax = ordTax > 0 ? ordTax : (dTax != null ? dTax : 0);
+          const disc = ordDisc > 0 ? ordDisc : (dDisc != null ? dDisc : 0);
+          const finalTotal = ordTotal > 0 ? ordTotal : (dTotal != null ? dTotal : (sub + tax - disc));
 
           data.subtotal = String(sub) as any;
           data.tax = String(tax) as any;
@@ -1093,11 +1102,13 @@ export class OrdersService {
         const dTax = draft.tax !== null && draft.tax !== undefined ? Number(draft.tax as any) : null;
         const dDisc = draft.discount !== null && draft.discount !== undefined ? Number(draft.discount as any) : null;
         const dTotal = draft.total !== null && draft.total !== undefined ? Number(draft.total as any) : null;
+
         // Prefer order values over draft values (order may have been updated with current POS state before payment)
         const sub = ordSub > 0 ? ordSub : (dSub != null ? dSub : 0);
         const tax = ordTax > 0 ? ordTax : (dTax != null ? dTax : 0);
         const disc = ordDisc > 0 ? ordDisc : (dDisc != null ? dDisc : 0);
         const finalTotal = ordTotal > 0 ? ordTotal : (dTotal != null ? dTotal : (sub + tax - disc));
+
         data.subtotal = String(sub) as any;
         data.tax = String(tax) as any;
         data.discount = String(disc) as any;

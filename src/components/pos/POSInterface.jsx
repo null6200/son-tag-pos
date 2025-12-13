@@ -1963,6 +1963,18 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         if (editingDraft?.isSuspended && (editingDraft?.orderId || editingDraft?.backendId)) {
           const orderId = editingDraft.orderId || null;
           if (orderId) {
+            // Update order with current POS financial state (tax may have been applied after loading draft)
+            try {
+              await api.orders.update(String(orderId), {
+                subtotal: String(subtotal),
+                discount: String(discountValue),
+                tax: String(tax),
+                total: String(total),
+                taxRate: String(taxRate ?? 0),
+              });
+            } catch (e) {
+              console.error('[POSInterface] Failed to update order financials before payment:', e);
+            }
             // If split payment, add multiple entries; else single entry
             if (String(paymentDetails?.method || '').toLowerCase() === 'multiple') {
               const src = paymentDetails || {};

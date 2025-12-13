@@ -955,7 +955,7 @@ export const api = {
       if (taxRate !== undefined) body.taxRate = taxRate;
       return request(`/orders/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
-    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId } = {}) {
+    create({ branchId, sectionId, sectionName, items, payment, tableId, status, reservationKey, allowOverselling, subtotal, discount, tax, total, taxRate, serviceType, waiterId, overrideOwnerId, orderId } = {}) {
       const body = { branchId, items };
       if (sectionId) body.sectionId = sectionId;
       if (!sectionId && sectionName) body.sectionName = sectionName;
@@ -972,6 +972,7 @@ export const api = {
       if (serviceType !== undefined) body.serviceType = serviceType;
       if (waiterId !== undefined) body.waiterId = waiterId;
       if (overrideOwnerId) body.overrideOwnerId = overrideOwnerId;
+      if (orderId) body.orderId = orderId;
       return request('/orders', { method: 'POST', body });
     },
     updateStatus(id, { status, overrideOwnerId } = {}) {
