@@ -1194,6 +1194,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       setCart([]);
       setEditingDraft(null);
       setSelectedTable(null);
+      setSelectedStaff(null); // Reset service staff so user must reselect for next order
       setCurrentService(serviceTypes[0] || '');
       setCurrentCustomer(customerTypes[0]);
       // Generate new reservation key for next cart session
