@@ -163,8 +163,6 @@ function fmt(v) {
   }
 }
 
-// ... rest of the code remains the same ...
-
 const defaultServiceTypes = ['Dine-in', 'Takeaway'];
 const customerTypes = ['Walk-in', 'Member', 'VIP', 'Corporate'];
 const categories = ['All'];
@@ -172,26 +170,30 @@ const categories = ['All'];
 const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLogout, shiftRegister, onShiftClose, draftToLoad, onClearDraftToLoad }) => {
   const [time, setTime] = useState(new Date());
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  // User-specific localStorage key prefix
+  const userStorageKey = (key) => `pos_${user?.id || 'guest'}_${key}`;
+
   const [cart, setCart] = useState(() => {
     try {
-      const saved = localStorage.getItem('posCart');
+      const saved = localStorage.getItem(userStorageKey('cart'));
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
   const [currentSection, setCurrentSection] = useState(() => {
-    try { return localStorage.getItem('posCurrentSection') || ''; } catch { return ''; }
+    try { return localStorage.getItem(userStorageKey('section')) || ''; } catch { return ''; }
   });
   const [branchSections, setBranchSections] = useState([]);
   const [serviceTypes, setServiceTypes] = useState([]);
   const [currentService, setCurrentService] = useState(() => {
-    try { return localStorage.getItem('posCurrentService') || ''; } catch { return ''; }
+    try { return localStorage.getItem(userStorageKey('service')) || ''; } catch { return ''; }
   });
   const [currentCustomer, setCurrentCustomer] = useState(() => {
-    try { return localStorage.getItem('posCurrentCustomer') || customerTypes[0]; } catch { return customerTypes[0]; }
+    try { return localStorage.getItem(userStorageKey('customer')) || customerTypes[0]; } catch { return customerTypes[0]; }
   });
   const [selectedTable, setSelectedTable] = useState(() => {
     try {
-      const saved = localStorage.getItem('posSelectedTable');
+      const saved = localStorage.getItem(userStorageKey('table'));
       return saved ? JSON.parse(saved) : null;
     } catch { return null; }
   });
@@ -208,42 +210,42 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [printData, setPrintData] = useState(null);
   const [reservationKey, setReservationKey] = useState(() => {
     try {
-      // Persist reservationKey so cart items survive page refresh with same reservation
-      const saved = localStorage.getItem('posReservationKey');
+      // Persist reservationKey so cart items survive page refresh with same reservation (user-specific)
+      const saved = localStorage.getItem(userStorageKey('reservationKey'));
       if (saved) return saved;
       const newKey = `CART|${(crypto && crypto.randomUUID && crypto.randomUUID()) || Math.random().toString(36).slice(2)}`;
-      localStorage.setItem('posReservationKey', newKey);
+      localStorage.setItem(userStorageKey('reservationKey'), newKey);
       return newKey;
     } catch { return `CART|${Math.random().toString(36).slice(2)}`; }
   });
   const printRef = useRef();
   const cartRef = useRef(cart);
 
-  // Persist cart to localStorage whenever it changes
+  // Persist cart to localStorage whenever it changes (user-specific)
   useEffect(() => {
     try {
       if (cart.length > 0) {
-        localStorage.setItem('posCart', JSON.stringify(cart));
+        localStorage.setItem(userStorageKey('cart'), JSON.stringify(cart));
       } else {
-        localStorage.removeItem('posCart');
+        localStorage.removeItem(userStorageKey('cart'));
       }
     } catch {}
   }, [cart]);
 
-  // Persist section, service, customer, and table to localStorage
+  // Persist section, service, customer, and table to localStorage (user-specific)
   useEffect(() => {
-    try { if (currentSection) localStorage.setItem('posCurrentSection', currentSection); } catch {}
+    try { if (currentSection) localStorage.setItem(userStorageKey('section'), currentSection); } catch {}
   }, [currentSection]);
   useEffect(() => {
-    try { if (currentService) localStorage.setItem('posCurrentService', currentService); } catch {}
+    try { if (currentService) localStorage.setItem(userStorageKey('service'), currentService); } catch {}
   }, [currentService]);
   useEffect(() => {
-    try { if (currentCustomer) localStorage.setItem('posCurrentCustomer', currentCustomer); } catch {}
+    try { if (currentCustomer) localStorage.setItem(userStorageKey('customer'), currentCustomer); } catch {}
   }, [currentCustomer]);
   useEffect(() => {
     try {
-      if (selectedTable) localStorage.setItem('posSelectedTable', JSON.stringify(selectedTable));
-      else localStorage.removeItem('posSelectedTable');
+      if (selectedTable) localStorage.setItem(userStorageKey('table'), JSON.stringify(selectedTable));
+      else localStorage.removeItem(userStorageKey('table'));
     } catch {}
   }, [selectedTable]);
 
