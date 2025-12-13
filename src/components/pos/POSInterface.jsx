@@ -1498,7 +1498,9 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
   const updateQty = async (id, delta) => {
     if (delta < 0) {
-      return requireOverride('decrement', { itemId: id }, async () => {
+      // Only require PIN if item existed in the original saved draft
+      const itemExistedInDraft = editingDraft?.cart?.some(di => di.id === id);
+      const doDecrement = async () => {
         const item = cart.find(ci => ci.id === id);
         if (!item) return;
         // Backend-first restore
@@ -1518,7 +1520,12 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         }
         // Refresh from backend to get authoritative stock counts
         scheduleRefreshPricingAndStock(100);
-      });
+      };
+      if (itemExistedInDraft) {
+        return requireOverride('decrement', { itemId: id }, doDecrement);
+      } else {
+        return doDecrement();
+      }
     }
 
     const product = products.find(p => p.id === id);
@@ -1587,7 +1594,9 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   };
 
   const handleVoid = (id) => {
-    requireOverride('void', { itemId: id }, async () => {
+    // Only require PIN if item existed in the original saved draft
+    const itemExistedInDraft = editingDraft?.cart?.some(di => di.id === id);
+    const doVoid = async () => {
       const item = cart.find(ci => ci.id === id);
       if (!item) return;
       const qty = Number(item.qty || 0);
@@ -1608,7 +1617,12 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       }
       // Refresh from backend to get authoritative stock counts
       scheduleRefreshPricingAndStock(100);
-    });
+    };
+    if (itemExistedInDraft) {
+      requireOverride('void', { itemId: id }, doVoid);
+    } else {
+      doVoid();
+    }
   }
 
   const handleSaveDraft = async () => {
