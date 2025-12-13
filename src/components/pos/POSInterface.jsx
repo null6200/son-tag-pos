@@ -261,7 +261,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
   const [autoSelectLoggedInAsServiceStaff, setAutoSelectLoggedInAsServiceStaff] = useState(false);
   const [isServicePinModalOpen, setServicePinModalOpen] = useState(false);
   const [pendingStaffId, setPendingStaffId] = useState(null);
-  const [protectedActions, setProtectedActions] = useState(['decrement', 'void', 'delete_draft', 'approve_credit_sale', 'clear_cart']);
+  const [protectedActions, setProtectedActions] = useState(['decrement', 'void', 'delete_draft', 'approve_credit_sale', 'clear_cart', 'edit_discount']);
   const [graceSeconds, setGraceSeconds] = useState(0);
   const [isOverrideOpen, setOverrideOpen] = useState(false);
   const [pendingOverride, setPendingOverride] = useState(null); // { type, payload, onApproved }
@@ -2389,7 +2389,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             setSelectedStaff={requestSelectStaff}
             onPrintByCategory={handlePrintByCategory}
             onViewSalesHistory={() => setIsSalesHistoryOpen(true)}
-            onEditDiscount={() => handlePinRequest({ type: 'edit_discount' })}
+            onEditDiscount={() => requireOverride('edit_discount', {}, () => setIsDiscountModalOpen(true))}
             onEditTax={() => setIsTaxModalOpen(true)}
             taxRate={taxRate}
             serviceTypes={serviceTypes}
