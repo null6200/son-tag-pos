@@ -1794,6 +1794,18 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
 
     const updatedDrafts = drafts.filter(d => d.id !== draftId);
     setDrafts(updatedDrafts);
+    
+    // If deleting the currently loaded draft, clear the cart and reset state
+    if (editingDraft && editingDraft.id === draftId) {
+      setCart([]);
+      setEditingDraft(null);
+      setSelectedTable(null);
+      setSelectedStaff(null);
+      setCurrentService(serviceTypes[0] || defaultServiceTypes[0]);
+      setCurrentCustomer(customerTypes[0]);
+      setDiscount({ type: 'percentage', value: 0 });
+    }
+    
     toast({ title: 'Draft Deleted', description: 'The saved order has been removed and stock restored.' });
     // Restore in backend inventory and delete draft
     (async () => {
@@ -2335,7 +2347,13 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
             customerOptions={customerOptions}
             selectedTable={selectedTable}
             setSelectedTable={setSelectedTable}
-            onClearCart={() => requireOverride('clear_cart', {}, () => handlePinSuccess({ type: 'clear_cart' }))}
+            onClearCart={() => {
+              if (editingDraft) {
+                toast({ title: 'Cannot Clear Cart', description: 'Use "Delete Draft" to remove a loaded draft and restore stock.', variant: 'destructive' });
+                return;
+              }
+              requireOverride('clear_cart', {}, () => handlePinSuccess({ type: 'clear_cart' }));
+            }}
             tables={tables}
             updateTableStatus={updateTableStatus}
             markTableStatus={markTableStatus}
