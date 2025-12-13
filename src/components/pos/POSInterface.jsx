@@ -1722,6 +1722,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
     setCurrentService(serviceTypes[0] || defaultServiceTypes[0]);
     setCurrentCustomer(customerTypes[0]);
     setDiscount({ type: 'percentage', value: 0 });
+    setSelectedStaff(null); // Reset service staff so user must reselect for next order
     // Fetch drafts first to ensure draftTableIds is updated before the auto-unlock useEffect runs
     try { await fetchDrafts(draftsPage); } catch {}
     // Now safe to clear selectedTable since the draft with this table is in the list
@@ -2161,11 +2162,13 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         setEditingDraft(null);
         setSelectedTable(null);
         setDiscount({ type: 'percentage', value: 0 });
+        setSelectedStaff(null); // Reset service staff so user must reselect for next order
       } else {
         setCart([]);
         setEditingDraft(null);
         setSelectedTable(null);
         setDiscount({ type: 'percentage', value: 0 });
+        setSelectedStaff(null); // Reset service staff so user must reselect for next order
       }
       try { const freedId = (editingDraft && editingDraft.table ? editingDraft.table.id : (selectedTable ? selectedTable.id : null)); if (freedId) setTables(prev => prev.map(t => t.id === freedId ? { ...t, status: 'available' } : t)); } catch {}
       try { if (currentSection) { const rows = await api.tables.list({ sectionId: currentSection }); setTables((rows || []).map(t => ({ id: t.id, name: t.name || t.code || t.id, sectionId: t.sectionId || t.section?.id || t.section, sectionName: t.section?.name || '', status: ((String(t.status || '').toLowerCase() === 'locked') || (String(t.status || '').toLowerCase() === 'occupied') || !!t.locked) ? 'occupied' : 'available', }))); } } catch {}
