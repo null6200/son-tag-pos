@@ -1084,9 +1084,42 @@ const DraftList = ({ setActiveTab, onSetDraftToLoad, user, mode = 'drafts', filt
         setDrafts([]);
         return;
       }
+      // Fetch drafts
       const res = await api.drafts?.list?.({ branchId });
-      const items = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
-      setDrafts(items);
+      const draftItems = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+      
+      // Also fetch suspended orders (credit sales) to show in Suspended Bills tab
+      let suspendedOrders = [];
+      try {
+        const ordersRes = await api.orders?.list?.({ branchId, status: 'SUSPENDED' });
+        const ordersList = Array.isArray(ordersRes?.items) ? ordersRes.items : (Array.isArray(ordersRes) ? ordersRes : []);
+        // Convert orders to draft-like format for display, but mark them as orders
+        suspendedOrders = ordersList.map(o => ({
+          id: o.id,
+          orderId: o.id,
+          name: o.receiptNo || `#${o.orderNumber || o.id?.slice(0,8)}`,
+          total: o.total,
+          status: 'SUSPENDED',
+          isSuspended: true,
+          isOrder: true, // Flag to distinguish from drafts
+          receiptNo: o.receiptNo,
+          serviceType: o.serviceType,
+          service: o.serviceType,
+          createdAt: o.createdAt,
+          updatedAt: o.updatedAt,
+          cart: o.items?.map(it => ({ productId: it.productId, qty: it.qty, price: it.price, name: it.product?.name || it.productName })) || [],
+          itemCount: o.items?.length || 0,
+          table: o.table,
+          waiterId: o.waiterId,
+          waiterName: o.waiterName,
+        }));
+      } catch {}
+      
+      // Merge drafts and suspended orders, avoiding duplicates (by orderId)
+      const draftOrderIds = new Set(draftItems.filter(d => d.orderId).map(d => d.orderId));
+      const uniqueSuspendedOrders = suspendedOrders.filter(o => !draftOrderIds.has(o.id));
+      
+      setDrafts([...draftItems, ...uniqueSuspendedOrders]);
     } catch {
       setDrafts([]);
     } finally {

@@ -295,17 +295,18 @@ export class DraftsService {
     const norm = (p: any) => (typeof p === 'string' ? p.toLowerCase() : '');
     const set = new Set((perms || []).map(norm));
     const hasDraftAllFlag = Array.from(set).some((p) => {
-      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts') return true;
-      if ((p.startsWith('view_') || p.startsWith('edit_')) && p.includes('draft') && p.includes('all')) return true;
+      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts' || p === 'draft_view_all') return true;
+      if ((p.startsWith('view_') || p.startsWith('edit_') || p.startsWith('draft_')) && p.includes('draft') && p.includes('all')) return true;
       return false;
     });
     // Users with explicit payment/finalization rights (e.g. cashiers) are allowed to edit
     // drafts during the checkout flow even when they are not the original waiter. Treat
     // explicit payment permission as draft-all capability so that finalizing a bill can
     // always clean up or link its draft, but do NOT elevate basic POS-sell permission.
-    const hasPaymentFinalize = set.has('add_payment');
+    const hasPaymentFinalize = set.has('add_payment') || set.has('add_edit_payment');
     const hasEditDraft = set.has('edit_draft');
-    const hasAll = set.has('all') || (hasDraftAllFlag && hasEditDraft) || hasPaymentFinalize;
+    const hasSalesUpdate = set.has('update_sale') || set.has('update_all_sale') || set.has('view_all_sales');
+    const hasAll = set.has('all') || (hasDraftAllFlag && hasEditDraft) || hasPaymentFinalize || hasSalesUpdate;
     if (!hasAll) {
       if (!userId) throw new BadRequestException('User context required');
       if (!existing.waiterId || String(existing.waiterId) !== String(userId)) {
@@ -478,16 +479,18 @@ export class DraftsService {
     const norm = (p: any) => (typeof p === 'string' ? p.toLowerCase() : '');
     const set = new Set((perms || []).map(norm));
     const hasDraftAllFlag = Array.from(set).some((p) => {
-      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts') return true;
-      if ((p.startsWith('view_') || p.startsWith('edit_')) && p.includes('draft') && p.includes('all')) return true;
+      if (p === 'view_drafts_all' || p === 'view_all_draft' || p === 'view_all_drafts' || p === 'edit_all_draft' || p === 'edit_all_drafts' || p === 'draft_view_all') return true;
+      if ((p.startsWith('view_') || p.startsWith('edit_') || p.startsWith('draft_')) && p.includes('draft') && p.includes('all')) return true;
       return false;
     });
     // Same rationale as update(): allow users with payment/finalization rights to delete
     // drafts created by other users as part of the settlement flow, so that finalized
     // bills do not leave orphaned drafts behind. Basic POS-sell permission alone does
     // not grant cross-user delete rights.
-    const hasPaymentFinalize = set.has('add_payment');
-    const hasAll = set.has('all') || hasDraftAllFlag || hasPaymentFinalize;
+    const hasPaymentFinalize = set.has('add_payment') || set.has('add_edit_payment');
+    const hasDeleteDraft = set.has('delete_draft');
+    const hasSalesUpdate = set.has('update_sale') || set.has('update_all_sale') || set.has('view_all_sales');
+    const hasAll = set.has('all') || hasDraftAllFlag || hasPaymentFinalize || hasDeleteDraft || hasSalesUpdate;
     if (!hasAll) {
       if (!userId) throw new BadRequestException('User context required');
       if (!existing.waiterId || String(existing.waiterId) !== String(userId)) {
