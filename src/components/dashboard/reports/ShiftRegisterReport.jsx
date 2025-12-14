@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileDown, Eye, XCircle, ArrowLeft, User, Mail, Building, MapPin, DollarSign, TrendingUp, TrendingDown, FileText, CreditCard } from 'lucide-react';
+import { FileDown, Eye, XCircle, ArrowLeft, User, Mail, Building, MapPin, DollarSign, TrendingUp, TrendingDown, FileText, CreditCard, Printer } from 'lucide-react';
 
 import {
   Table,
@@ -293,18 +293,65 @@ const ShiftDetailsView = ({ report, onBack, fmt, currencySymbol }) => {
   const displayUserEmail = shift.openedByEmail || firstCashier?.email || '';
   const displayLocation = [shift.branchName, shift.sectionName].filter(Boolean).join(' - ') || shift.branchLocation || '';
 
+  const printRef = React.useRef(null);
+
+  const handlePrint = () => {
+    if (!printRef.current) return;
+    const printContent = printRef.current.innerHTML;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Register Details Report</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 20px; font-size: 12px; }
+            h2 { font-size: 18px; margin-bottom: 4px; }
+            h3 { font-size: 14px; margin: 16px 0 8px 0; }
+            p { margin-bottom: 4px; color: #666; font-size: 11px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+            th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+            th { background: #f5f5f5; font-weight: 600; }
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            .font-semibold { font-weight: 600; }
+            .summary-grid { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #ddd; margin-bottom: 16px; }
+            .summary-grid > div { padding: 6px 10px; border-bottom: 1px solid #ddd; }
+            .summary-grid > div:nth-last-child(-n+2) { border-bottom: none; }
+            .bg-green { background: #f0fdf4; }
+            .bg-red { background: #fef2f2; }
+            .bg-yellow { background: #fefce8; }
+            .footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; }
+            .totals-row { display: flex; justify-content: space-between; margin-top: 8px; font-weight: 600; font-size: 11px; }
+            @media print { body { padding: 10px; } }
+          </style>
+        </head>
+        <body>${printContent}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  };
+
   return (
     <div className="space-y-6">
-      <Button onClick={onBack} variant="outline"><ArrowLeft className="w-4 h-4 mr-2" /> Back to List</Button>
+      <Button onClick={onBack} variant="outline" className="print:hidden"><ArrowLeft className="w-4 h-4 mr-2" /> Back to List</Button>
 
-      <Card className="glass-effect">
-        <CardHeader>
-          <CardTitle>Register Details</CardTitle>
-          <CardDescription>
-            {`Register Details (${shift.startedAt ? new Date(shift.startedAt).toLocaleString() : (shift.openedAt ? new Date(shift.openedAt).toLocaleString() : 'Unknown')} - ${shift.endedAt ? new Date(shift.endedAt).toLocaleString() : (shift.closedAt ? new Date(shift.closedAt).toLocaleString() : 'Now')})`}
-          </CardDescription>
+      <Card className="glass-effect print:shadow-none print:border-0">
+        <CardHeader className="flex flex-row items-start justify-between">
+          <div>
+            <CardTitle>Register Details</CardTitle>
+            <CardDescription>
+              {`Register Details (${shift.startedAt ? new Date(shift.startedAt).toLocaleString() : (shift.openedAt ? new Date(shift.openedAt).toLocaleString() : 'Unknown')} - ${shift.endedAt ? new Date(shift.endedAt).toLocaleString() : (shift.closedAt ? new Date(shift.closedAt).toLocaleString() : 'Now')})`}
+            </CardDescription>
+          </div>
+          <Button variant="outline" onClick={handlePrint} className="print:hidden"><Printer className="w-4 h-4 mr-2" /> Print Report</Button>
         </CardHeader>
-        <CardContent className="space-y-8">
+        <CardContent ref={printRef} className="space-y-8">
 
           {/* Payment summary table */}
           <section>
