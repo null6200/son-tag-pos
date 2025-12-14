@@ -158,7 +158,7 @@ const OrderManagement = ({ user }) => {
                 const statusUpper = rawStatus.toUpperCase();
                 const statusLabel = statusUpper === 'PAID' ? 'Paid' : (statusUpper === 'CANCELLED' ? 'Refunded' : rawStatus);
                 const { icon: Icon, color, bgColor } = getStatusVisuals(statusLabel);
-                const invoice = order.displayInvoice || order.invoice_no || order.invoiceNo || order.receiptNo || (order.orderNumber ? `#${order.orderNumber}` : null) || order.id;
+                const invoice = order.receiptNo || order.displayInvoice || order.invoice_no || order.invoiceNo || order.id;
                 const sectionName = order.sectionName || order.section?.name;
                 const branchName = order.branchName || order.branch?.name;
                 return (

@@ -165,14 +165,9 @@ export class DraftsService {
       // the full lifecycle (draft -> edits -> finalised) on a single timeline.
       let orderId = dto.orderId || null;
       if (!orderId) {
-        // Allocate next order number for this branch
-        const updated = await tx.branch.update({
-          where: { id: dto.branchId },
-          data: { nextOrderSeq: { increment: 1 } },
-          select: { nextOrderSeq: true },
-        });
-        const orderNumber = updated.nextOrderSeq;
-
+        // Create backing order for draft without allocating a receipt number.
+        // Receipt numbers (receiptNo) are only assigned when order is finalized to PAID.
+        // This ensures no gaps in receipt numbering when drafts are deleted/abandoned.
         const total = Number(dto.total as any ?? 0);
         const subtotal = Number(dto.subtotal as any ?? 0);
         const discount = Number(dto.discount as any ?? 0);
@@ -192,7 +187,6 @@ export class DraftsService {
             taxRate: dto.taxRate != null ? (String(dto.taxRate) as any) : undefined,
             serviceType: dto.serviceType,
             tableId: dto.tableId ?? null,
-            orderNumber,
           },
         });
         orderId = order.id;

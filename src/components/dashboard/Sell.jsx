@@ -429,7 +429,7 @@ const SalesList = ({ onPrint, user, filters }) => {
       const cols = ['Invoice','Date','Cashier','Total','Status'];
       const lines = [cols.join(',')];
       for (const s of rows) {
-        const invRaw = s.displayInvoice || s.invoice_no || s.invoiceNo || s.receiptNo || (s.orderNumber != null ? `INV${String(s.orderNumber).padStart(3,'0')}` : (s.id && s.id.slice ? s.id.slice(0,8) : String(s.id)));
+        const invRaw = s.receiptNo || s.displayInvoice || s.invoice_no || s.invoiceNo || (s.id && s.id.slice ? s.id.slice(0,8) : String(s.id));
         const date = new Date(s.createdAt || s.timestamp || s.updatedAt || Date.now()).toLocaleString();
         const total = Number(s.total ?? s.totalAmount ?? 0).toFixed(2);
         const base = String(s.status || '').toUpperCase();
@@ -453,7 +453,7 @@ const SalesList = ({ onPrint, user, filters }) => {
     };
 
     const exportXlsxRows = (rows) => rows.map(s => {
-      const invRaw = s.displayInvoice || s.invoice_no || s.invoiceNo || s.receiptNo || (s.orderNumber != null ? `INV${String(s.orderNumber).padStart(3,'0')}` : (s.id && s.id.slice ? s.id.slice(0,8) : String(s.id)));
+      const invRaw = s.receiptNo || s.displayInvoice || s.invoice_no || s.invoiceNo || (s.id && s.id.slice ? s.id.slice(0,8) : String(s.id));
       const date = new Date(s.createdAt || s.timestamp || s.updatedAt || Date.now()).toLocaleString();
       const total = Number(s.total ?? s.totalAmount ?? 0).toFixed(2);
       const base = String(s.status || '').toUpperCase();
@@ -512,9 +512,9 @@ const SalesList = ({ onPrint, user, filters }) => {
                             <div key={sale.id} className="p-4 rounded-lg border bg-background/50 flex justify-between items-center">
                                 <div className="flex-1">
                                     {colVis.invoice && (() => {
-                                      const raw = sale.displayInvoice || sale.invoice_no || sale.invoiceNo || sale.receiptNo || (sale.orderNumber ? String(sale.orderNumber) : null) || (sale.id && sale.id.slice ? sale.id.slice(0,8) : String(sale.id));
+                                      const raw = sale.receiptNo || sale.displayInvoice || sale.invoice_no || sale.invoiceNo || (sale.id && sale.id.slice ? sale.id.slice(0,8) : String(sale.id));
                                       const label = (() => {
-                                        if (sale.orderNumber != null) return `INV${String(sale.orderNumber).padStart(3,'0')}`;
+                                        if (sale.receiptNo) return sale.receiptNo;
                                         const s = String(raw || '');
                                         if (/^inv/i.test(s)) return s; // already prefixed
                                         const numMatch = s.match(/^\d+$/);
@@ -635,8 +635,8 @@ const SaleDetailModal = ({ isOpen, onClose, sale, onPrint }) => {
     })();
     const currencySymbol = getCurrencySymbol();
     const invoiceLabel = (() => {
-        const raw = sale.displayInvoice || sale.invoice_no || sale.invoiceNo || sale.receiptNo || (sale.orderNumber != null ? String(sale.orderNumber) : null) || (sale.id && sale.id.slice ? sale.id.slice(0,8) : String(sale.id));
-        if (sale.orderNumber != null) return `INV${String(sale.orderNumber).padStart(3,'0')}`;
+        const raw = sale.receiptNo || sale.displayInvoice || sale.invoice_no || sale.invoiceNo || (sale.id && sale.id.slice ? sale.id.slice(0,8) : String(sale.id));
+        if (sale.receiptNo) return sale.receiptNo;
         const s = String(raw || '');
         if (/^inv/i.test(s)) return s;
         if (/^\d+$/.test(s)) return `INV${String(Number(s)).padStart(3,'0')}`;
@@ -1735,7 +1735,7 @@ const SellReturnList = ({ user, filters = {} }) => {
       const cols = ['Invoice','Date','Amount'];
       const lines = [cols.join(',')];
       for (const d of rows) {
-        const invRaw = d.displayInvoice || d.invoice_no || d.invoiceNo || d.receiptNo || (d.orderNumber != null ? `INV${String(d.orderNumber).padStart(3,'0')}` : (d.id && d.id.slice ? d.id.slice(0,8) : String(d.id)));
+        const invRaw = d.receiptNo || d.displayInvoice || d.invoice_no || d.invoiceNo || (d.id && d.id.slice ? d.id.slice(0,8) : String(d.id));
         const row = [invRaw, new Date(d.createdAt || d.updatedAt || d.id).toLocaleString(), -Math.abs(Number(d.refundTotal ?? d.refundedAmount ?? d.totalAmount ?? d.total ?? 0)).toFixed(2)].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
         lines.push(row);
       }
@@ -1744,12 +1744,12 @@ const SellReturnList = ({ user, filters = {} }) => {
     };
     const printTable = (rows) => {
       const w = window.open('', 'print'); if (!w) return;
-      const rowsHtml = rows.map(r => `<tr><td>${r.displayInvoice || r.invoice_no || r.invoiceNo || r.receiptNo || (r.orderNumber != null ? `INV${String(r.orderNumber).padStart(3,'0')}` : (r.id && r.id.slice ? r.id.slice(0,8) : String(r.id)))}</td><td>${new Date(r.createdAt || r.updatedAt || r.id).toLocaleString()}</td><td>${-Math.abs(Number(r.refundTotal ?? r.refundedAmount ?? r.totalAmount ?? r.total ?? 0)).toFixed(2)}</td></tr>`).join('');
+      const rowsHtml = rows.map(r => `<tr><td>${r.receiptNo || r.displayInvoice || r.invoice_no || r.invoiceNo || (r.id && r.id.slice ? r.id.slice(0,8) : String(r.id))}</td><td>${new Date(r.createdAt || r.updatedAt || r.id).toLocaleString()}</td><td>${-Math.abs(Number(r.refundTotal ?? r.refundedAmount ?? r.totalAmount ?? r.total ?? 0)).toFixed(2)}</td></tr>`).join('');
       w.document.write(`<html><head><title>Returns</title></head><body><table border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><thead><tr><th>Invoice</th><th>Date</th><th>Amount</th></tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`); w.document.close(); w.focus(); w.print(); w.close();
     };
 
     const exportXlsxRows = (rows) => rows.map(r => {
-      const invRaw = r.displayInvoice || r.invoice_no || r.invoiceNo || r.receiptNo || (r.orderNumber != null ? `INV${String(r.orderNumber).padStart(3,'0')}` : (r.id && r.id.slice ? r.id.slice(0,8) : String(r.id)));
+      const invRaw = r.receiptNo || r.displayInvoice || r.invoice_no || r.invoiceNo || (r.id && r.id.slice ? r.id.slice(0,8) : String(r.id));
       const obj = {};
       if (colVis.invoice) obj.Invoice = invRaw;
       if (colVis.date) obj.Date = new Date(r.createdAt || r.updatedAt || r.id).toLocaleString();

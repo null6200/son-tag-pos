@@ -16,8 +16,8 @@ const OrderDetailsModal = ({ order, isOpen, onClose }) => {
   if (/ngn|nigeria/i.test(String(currencySymbol))) currencySymbol = '₦';
 
   const invoiceLabel = (() => {
-    const raw = order.displayInvoice || order.invoice_no || order.invoiceNo || order.receiptNo || (order.orderNumber != null ? String(order.orderNumber) : null) || (order.id && order.id.slice ? order.id.slice(0,8) : String(order.id));
-    if (order.orderNumber != null) return `INV${String(order.orderNumber).padStart(3,'0')}`;
+    const raw = order.receiptNo || order.displayInvoice || order.invoice_no || order.invoiceNo || (order.id && order.id.slice ? order.id.slice(0,8) : String(order.id));
+    if (order.receiptNo) return order.receiptNo;
     const s = String(raw || '');
     if (/^inv/i.test(s)) return s;
     if (/^\d+$/.test(s)) return `INV${String(Number(s)).padStart(3,'0')}`;

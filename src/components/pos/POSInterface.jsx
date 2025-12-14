@@ -433,7 +433,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
               if (items[i].isSuspended && items[i].orderId) {
                 const r = settled[idx++];
                 if (r?.status === 'fulfilled' && r.value) {
-                  const inv = r.value.displayInvoice || r.value.invoice_no || r.value.invoiceNo || r.value.receiptNo || r.value.orderNumber || r.value.id;
+                  const inv = r.value.receiptNo || r.value.displayInvoice || r.value.invoice_no || r.value.invoiceNo || r.value.id;
                   items[i] = { ...items[i], invoice: inv ? String(inv) : null };
                 }
               }
@@ -453,7 +453,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
               if (items[i].isSuspended && items[i].orderId) {
                 const r = settled[idx++];
                 if (r?.status === 'fulfilled' && r.value) {
-                  const inv = r.value.displayInvoice || r.value.invoice_no || r.value.invoiceNo || r.value.receiptNo || r.value.orderNumber || r.value.id;
+                  const inv = r.value.receiptNo || r.value.displayInvoice || r.value.invoice_no || r.value.invoiceNo || r.value.id;
                   items[i] = { ...items[i], invoice: inv ? String(inv) : null };
                 }
               }
@@ -1954,10 +1954,45 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
         } catch {}
         // If an order was previously created in this session and tied to the table, mark it SUSPENDED to auto-release (best-effort, guarded)
         try { if (recentSales?.[0]?.orderId) { await api.orders.updateStatus(String(recentSales[0].orderId), { status: 'SUSPENDED' }); } } catch {}
+        // Fetch order for printing (with receiptNo)
+        let creditReceiptData = null;
+        try {
+          if (createdSuspendedOrder?.id) {
+            const ord = await api.orders.get(String(createdSuspendedOrder.id));
+            if (ord) {
+              creditReceiptData = {
+                id: ord.receiptNo || ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.id,
+                items: (ord.items || []).map(it => ({
+                  id: it.productId || it.product?.id || it.id,
+                  name: it.product?.name || it.productName || String(it.productId || ''),
+                  qty: Number(it.qty || it.quantity || 0),
+                  price: Number(it.price || 0),
+                })),
+                table: ord.table?.name || ord.tableName || draftTable?.name || undefined,
+                subtotal: Number(ord.subtotal || subtotal || 0),
+                discount: Number(ord.discount || discountValue || 0),
+                tax: Number(ord.tax || tax || 0),
+                total: Number(ord.total || total || 0),
+                taxRate: Number(ord.taxRate || taxRate || 0),
+                paymentDetails: { method: 'credit sale' },
+                waiter: ord.waiter?.name || ord.waiterName || waiterName || undefined,
+                cashier: user?.username || '',
+                branch: user?.branch || '',
+                section: ord.section?.name || branchSections.find(s => s.id === currentSection)?.name || undefined,
+                serviceType: ord.serviceType || currentService || undefined,
+                isReceipt: true,
+              };
+            }
+          }
+        } catch {}
         // recent sales entry for credit
-        try { setRecentSales(prev => [{ ...saleData, paymentDetails: { method: 'credit sale' } }, ...prev].slice(0,50)); } catch {}
+        try { setRecentSales(prev => [creditReceiptData || { ...saleData, paymentDetails: { method: 'credit sale' } }, ...prev].slice(0,50)); } catch {}
         // clear and unlock
         setPaymentModalOpen(false);
+        // Show print modal for credit sale
+        if (creditReceiptData) {
+          setTimeout(() => { setPrintData({ type: 'final-receipt', data: creditReceiptData }); }, 200);
+        }
         setCart([]);
         setEditingDraft(null);
         setSelectedTable(null);
@@ -2058,7 +2093,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
                   paymentDetailsResolved = { method: 'multiple', details };
                 }
                 receiptData = {
-                  id: ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.receiptNo || ord.orderNumber || ord.id,
+                  id: ord.receiptNo || ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.id,
                   items: (ord.items || []).map(it => ({
                     id: it.productId || it.product?.id || it.id,
                     name: it.product?.name || it.productName || String(it.productId || ''),
@@ -2123,7 +2158,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
                   paymentDetailsResolved = { method: 'multiple', details };
                 }
                 receiptData = {
-                  id: ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.receiptNo || ord.orderNumber || ord.id,
+                  id: ord.receiptNo || ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.id,
                   items: (ord.items || []).map(it => ({
                     id: it.productId || it.product?.id || it.id,
                     name: it.product?.name || it.productName || String(it.productId || ''),
@@ -2154,7 +2189,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
           try { window.dispatchEvent(new CustomEvent('orders:changed', { detail: { action: 'created', orderId: createdOrder?.id || null } })); } catch {}
         }
         try { const rows = await api.inventory.listBySection({ sectionId: currentSection, autoRelease: true }); const secName = branchSections.find(s => s.id === currentSection)?.name || ''; if (secName) { setStockLevels(prev => { const next = { ...prev }; const byProduct = {}; (rows || []).forEach(r => { byProduct[r.productId] = Number(r.qtyOnHand || 0); }); Object.keys(byProduct).forEach(pid => { next[pid] = next[pid] || {}; next[pid][secName] = byProduct[pid]; }); return next; }); } } catch {}
-        if (createdOrder) saleData.id = createdOrder.displayInvoice || createdOrder.invoice_no || createdOrder.invoiceNo || createdOrder.receiptNo || createdOrder.orderNumber || createdOrder.id;
+        if (createdOrder) saleData.id = createdOrder.receiptNo || createdOrder.displayInvoice || createdOrder.invoice_no || createdOrder.invoiceNo || createdOrder.id;
       } catch (e) {
         const msg = e?.message || e; toast({ title: 'Order save failed', description: String(msg), variant: 'destructive' }); return;
       }
@@ -2257,7 +2292,7 @@ const POSInterface = ({ user, toggleTheme, currentTheme, onBackToDashboard, onLo
       const ord = await api.orders.get(String(id));
       if (ord) {
         const receiptData = {
-          id: ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.receiptNo || ord.orderNumber || ord.id,
+          id: ord.receiptNo || ord.displayInvoice || ord.invoice_no || ord.invoiceNo || ord.id,
           items: (ord.items || []).map(it => ({
             id: it.productId || it.product?.id || it.id,
             name: it.product?.name || it.productName || String(it.productId || ''),

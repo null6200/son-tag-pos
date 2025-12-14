@@ -119,7 +119,16 @@ export class OrdersService {
       });
       // Add display invoice fields and merge draft data for credit orders
       return rows.map((o: any) => {
-        const invoice = o.invoice_no || o.invoiceNo || o.receiptNo || (typeof o.orderNumber !== 'undefined' ? String(o.orderNumber) : undefined);
+          let invoice: string | undefined;
+  if (o.receiptNo) {
+    invoice = String(o.receiptNo);
+  } else if (typeof o.orderNumber !== 'undefined' && o.orderNumber !== null) {
+    const year = new Date(o.createdAt || new Date()).getFullYear();
+    const padded = String(o.orderNumber).padStart(4, '0');
+    invoice = `${year}/${padded}`;
+  } else if (o.invoice_no || o.invoiceNo) {
+    invoice = String(o.invoice_no || o.invoiceNo);
+  }
         const status = String(o.status || '').toUpperCase();
         const draft = Array.isArray(o.drafts) && o.drafts.length > 0 ? o.drafts[0] : null;
         const emptyService = !o.serviceType || !String(o.serviceType).trim();
@@ -182,7 +191,16 @@ export class OrdersService {
     ]);
     // Add display invoice fields and merge draft data for credit orders
     const mapped = rows.map((o: any) => {
-      const invoice = o.invoice_no || o.invoiceNo || o.receiptNo || (typeof o.orderNumber !== 'undefined' ? String(o.orderNumber) : undefined);
+     let invoice: string | undefined;
+  if (o.receiptNo) {
+    invoice = String(o.receiptNo);
+  } else if (typeof o.orderNumber !== 'undefined' && o.orderNumber !== null) {
+    const year = new Date(o.createdAt || new Date()).getFullYear();
+    const padded = String(o.orderNumber).padStart(4, '0');
+    invoice = `${year}/${padded}`;
+  } else if (o.invoice_no || o.invoiceNo) {
+    invoice = String(o.invoice_no || o.invoiceNo);
+  }
       const status = String(o.status || '').toUpperCase();
       const draft = Array.isArray(o.drafts) && o.drafts.length > 0 ? o.drafts[0] : null;
       const emptyService = !o.serviceType || !String(o.serviceType).trim();
@@ -487,13 +505,7 @@ export class OrdersService {
       }
       const isReused = !!order;
       if (!order) {
-        // allocate next order number for this branch ONLY when creating a new order
-        const updated = await tx.branch.update({
-          where: { id: resolvedBranchId },
-          data: { nextOrderSeq: { increment: 1 } },
-          select: { nextOrderSeq: true },
-        });
-        const orderNumber = updated.nextOrderSeq;
+        // Create order without receipt number - receiptNo is assigned only on finalization to PAID
         order = await tx.order.create({
           data: {
             branchId: resolvedBranchId,
@@ -501,7 +513,6 @@ export class OrdersService {
             userId: userId || null,
             status: (initialStatus as any) || ('ACTIVE' as any),
             total: '0' as any,
-            orderNumber,
             tableId: dto.tableId || null,
             waiterId: dto.waiterId || null,
             waiterName: (dto as any).waiterName || waiterName,
@@ -546,6 +557,21 @@ export class OrdersService {
         }
       }
 
+      // If order is being finalized as PAID or SUSPENDED (credit sale), assign receiptNo now
+      let receiptNo: string | undefined;
+      if ((effectiveStatus === 'PAID' || effectiveStatus === 'SUSPENDED') && !(order as any).receiptNo) {
+        try {
+          const upd = await tx.branch.update({
+            where: { id: resolvedBranchId },
+            data: { nextReceiptSeq: { increment: 1 } },
+            select: { nextReceiptSeq: true },
+          });
+          const year = new Date().getFullYear();
+          const paddedSeq = String(upd.nextReceiptSeq).padStart(4, '0');
+          receiptNo = `${year}/${paddedSeq}`;
+        } catch {}
+      }
+
       const updateData = {
         total: String(finalTotal) as any,
         subtotal: String(isNaN(sub) ? 0 : sub) as any,
@@ -553,6 +579,7 @@ export class OrdersService {
         tax: String(isNaN(txAmt) ? 0 : txAmt) as any,
         taxRate: txRate !== null && !isNaN(txRate) ? (String(txRate) as any) : undefined,
         status: effectiveStatus as any,
+        ...(receiptNo ? { receiptNo } : {}),
         // Always update these fields when reusing an order to ensure current POS state is persisted
         ...(dto.tableId ? { tableId: dto.tableId } : {}),
         ...(dto.serviceType ? { serviceType: dto.serviceType } : {}),
@@ -753,8 +780,8 @@ export class OrdersService {
         } catch {}
       }
 
-      // If moving to PAID, merge financials/meta from latest draft when order is missing values and recompute total.
-      if (status === 'PAID') {
+      // If moving to PAID or SUSPENDED (credit sale), merge financials/meta from latest draft when order is missing values and recompute total.
+      if (status === 'PAID' || status === 'SUSPENDED') {
         const draft = await tx.draft.findFirst({ where: { orderId }, orderBy: { updatedAt: 'desc' } });
         const o: any = order as any;
         try {
@@ -808,17 +835,20 @@ export class OrdersService {
           // No draft: nothing to backfill for tableId
         }
 
-        // If this order is being finalized and has no printed number yet, allocate a new receipt number.
-        // Include orderNumber in the check to avoid double-allocating when draft/order creation already assigned one.
-        const hasPrintedNumber = (o as any).invoice_no || (o as any).invoiceNo || (o as any).receiptNo || (o as any).orderNumber;
+        // If this order is being finalized and has no receipt number yet, allocate a new one.
+        // Receipt numbers use a separate counter (nextReceiptSeq) from draft order numbers,
+        // ensuring no gaps in receipt numbering when drafts are deleted/abandoned.
+        const hasPrintedNumber = (o as any).receiptNo;
         try {
           if (!hasPrintedNumber) {
             const upd = await tx.branch.update({
               where: { id: (o as any).branchId },
-              data: { nextOrderSeq: { increment: 1 } },
-              select: { nextOrderSeq: true },
+              data: { nextReceiptSeq: { increment: 1 } },
+              select: { nextReceiptSeq: true },
             });
-            (data as any).receiptNo = String(upd.nextOrderSeq) as any;
+            const year = new Date().getFullYear();
+            const paddedSeq = String(upd.nextReceiptSeq).padStart(4, '0');
+            (data as any).receiptNo = `${year}/${paddedSeq}` as any;
           }
         } catch {}
 

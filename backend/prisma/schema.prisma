@@ -568,6 +568,7 @@ model Branch {
   subcategories    Subcategory[]
   settings         Setting[]
   nextOrderSeq     Int               @default(0)
+  nextReceiptSeq   Int               @default(0)
   nextSkuSeq       Int               @default(0)
   appRoles         AppRole[]
   // Back-relations for config entities
@@ -675,7 +676,8 @@ model Order {
 
   status      OrderStatus @default(PAID)
   total       Decimal     @db.Decimal(12, 2)
-  orderNumber Int
+  orderNumber Int?
+  receiptNo   String?
   // Persisted financial breakdown
   subtotal    Decimal     @db.Decimal(12, 2) @default(0)
   discount    Decimal     @db.Decimal(12, 2) @default(0)
