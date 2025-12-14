@@ -82,11 +82,12 @@ export class OrdersService {
 
   // List orders with optional pagination. When page/pageSize are omitted, returns a plain array
   // to preserve backward compatibility. When provided, returns a { items, total } envelope.
-  async list(branchId?: string, from?: string, to?: string, userId?: string, perms: string[] = [], page?: number, pageSize?: number) {
+  async list(branchId?: string, from?: string, to?: string, userId?: string, perms: string[] = [], page?: number, pageSize?: number, status?: string, filterUserId?: string) {
     const where: any = {
       // Exclude DRAFT orders from sales history - drafts should only appear in the drafts list
-      status: { notIn: ['DRAFT'] },
+      ...(status ? { status: status.toUpperCase() } : { status: { notIn: ['DRAFT'] } }),
       ...(branchId ? { branchId } : {}),
+      ...(filterUserId ? { userId: filterUserId } : {}),
       ...(from || to
         ? {
             createdAt: {

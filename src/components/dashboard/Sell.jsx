@@ -345,7 +345,7 @@ const SalesList = ({ onPrint, user, filters }) => {
 
     const filteredSales = sales.filter(sale => {
         const q = searchTerm.toLowerCase();
-        const matchesQuery = (sale.id?.toString().toLowerCase() || '').includes(q) || (sale.cashier?.toLowerCase() || '').includes(q) || (sale.userName?.toLowerCase() || '').includes(q);
+        const matchesQuery = (sale.receiptNo?.toLowerCase() || '').includes(q) || (sale.id?.toString().toLowerCase() || '').includes(q) || (sale.cashier?.toLowerCase() || '').includes(q) || (sale.userName?.toLowerCase() || '').includes(q) || (sale.orderNumber?.toString() || '').includes(q);
         if (!matchesQuery) return false;
         // Payment status filter
         const total = Number(sale.total ?? sale.totalAmount ?? 0);

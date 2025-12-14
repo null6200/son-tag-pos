@@ -933,13 +933,16 @@ export const api = {
     },
   },
   orders: {
-    list({ branchId, from, to, page, pageSize } = {}) {
+    list({ branchId, from, to, page, pageSize, status, userId, limit } = {}) {
       const params = new URLSearchParams();
       if (branchId) params.set('branchId', branchId);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       if (page) params.set('page', String(page));
       if (pageSize) params.set('pageSize', String(pageSize));
+      if (status) params.set('status', status);
+      if (userId) params.set('userId', userId);
+      if (limit) params.set('pageSize', String(limit));
       const q = params.toString() ? `?${params.toString()}` : '';
       return request(`/orders${q}`);
     },

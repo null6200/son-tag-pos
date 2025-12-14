@@ -152,6 +152,8 @@ export class OrdersController {
     @Query('to') to?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('status') status?: string,
+    @Query('userId') filterUserId?: string,
     @Req() req?: any,
   ) {
     const userId = req?.user?.userId as string | undefined;
@@ -163,7 +165,7 @@ export class OrdersController {
     const effectiveUserId = canSeeAll ? undefined : userId;
     const p = page ? Number(page) : undefined;
     const ps = pageSize ? Number(pageSize) : undefined;
-    return this.orders.list(branchId, from, to, effectiveUserId, perms, p, ps);
+    return this.orders.list(branchId, from, to, effectiveUserId, perms, p, ps, status, filterUserId);
   }
 
   @UseGuards(PermissionsGuard)
