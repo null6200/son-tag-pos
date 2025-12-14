@@ -3016,7 +3016,7 @@ const CartPanel = ({ user = {}, cart = [], onUpdateQty, onSetQty, onVoid, onPrin
               <ChevronDown className="w-4 h-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-56">
+          <DropdownMenuContent className="w-56 max-h-64 overflow-y-auto">
             {tables
               .filter(t => t.sectionId === currentSection)
               .map(table => (
