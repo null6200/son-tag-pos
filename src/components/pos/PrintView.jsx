@@ -12,6 +12,8 @@ const PrintView = forwardRef(({ type, data }, ref) => {
         return <FinalPrintout data={data} />;
       case 'item-invoice':
         return <ItemInvoice data={data} />;
+      case 'z-report':
+        return <ZReportPrintout data={data} />;
       default:
         return <div>Unsupported print type</div>;
     }
@@ -297,6 +299,180 @@ const Footer = ({ message }) => (
   </div>
 );
 
+const ZReportPrintout = ({ data }) => {
+  const { 
+    items = [], 
+    byCategory = {}, 
+    byBrand = {}, 
+    totalSales = 0, 
+    cash = 0, 
+    card = 0, 
+    transfer = 0, 
+    totalCredit = 0, 
+    serviceStaff, 
+    cashiers, 
+    shiftRegister, 
+    user, 
+    reportType = 'Z-Report' 
+  } = data || {};
+
+  let businessInfo = {};
+  try {
+    const raw = localStorage.getItem('businessInfo');
+    businessInfo = raw ? JSON.parse(raw) : {};
+  } catch { businessInfo = {}; }
+
+  const sanitizeSymbol = (raw) => {
+    const str = String(raw || '').trim();
+    const m = str.match(/[$€£₦¥₹₽﷼₺₩₫]/);
+    if (m) return m[0];
+    const code = (str.split(/\s|-|\|/)[0] || '').toUpperCase().slice(0,3);
+    const map = { NGN: '₦', USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', INR: '₹' };
+    return map[code] || (code && code.length === 3 ? code : '');
+  };
+  const currency = sanitizeSymbol(businessInfo.currencySymbol || businessInfo.currency || '');
+  const fmtMoney = (n) => {
+    const num = Number(n || 0);
+    if (!Number.isFinite(num)) return `${currency ? currency + ' ' : ''}0.00`;
+    const formatted = num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${currency ? currency + ' ' : ''}${formatted}`;
+  };
+
+  const branchName = shiftRegister?.branchName || user?.branch?.name || user?.branch || '';
+  const sectionName = shiftRegister?.sectionName || '';
+  const openedAt = shiftRegister?.openedAt ? new Date(shiftRegister.openedAt).toLocaleString() : '';
+  const closedAt = shiftRegister?.closedAt ? new Date(shiftRegister.closedAt).toLocaleString() : 'Open';
+  const shiftStatus = shiftRegister?.status || 'OPEN';
+
+  const totalPayments = Number(cash) + Number(card) + Number(transfer);
+  const grandTotal = Number(totalSales) || totalPayments;
+
+  return (
+    <div style={styles.container}>
+      <TopHeader logoUrl={businessInfo.logoUrl || ''} />
+      <div style={styles.header}>
+        {businessInfo.name && <h1 style={styles.title}>{String(businessInfo.name)}</h1>}
+        {businessInfo.address && <p>{String(businessInfo.address)}</p>}
+        {(businessInfo.phone || businessInfo.email) && (
+          <p>Tel: {String(businessInfo.phone || '')}{businessInfo.phone && businessInfo.email ? ' | ' : ''}Email: {String(businessInfo.email || '')}</p>
+        )}
+      </div>
+      <hr style={styles.dashedHr} />
+      <h2 style={styles.subHeader}>{reportType.toUpperCase()}</h2>
+      <hr style={styles.dashedHr} />
+
+      {/* Shift Info */}
+      <div style={styles.section}>
+        {branchName && <p><strong>Branch:</strong> {branchName}</p>}
+        {sectionName && <p><strong>Section:</strong> {sectionName}</p>}
+        <p><strong>Shift Opened:</strong> {openedAt}</p>
+        <p><strong>Shift Closed:</strong> {closedAt}</p>
+        <p><strong>Status:</strong> {shiftStatus}</p>
+        <p><strong>Report Generated:</strong> {new Date().toLocaleString()}</p>
+      </div>
+      <hr style={styles.dashedHr} />
+
+      {/* Sales Summary */}
+      <div style={styles.section}>
+        <h3 style={{...styles.subHeader, fontSize: '14px'}}>SALES SUMMARY</h3>
+        <div style={styles.flexBetween}>
+          <span>Total Sales:</span>
+          <span style={styles.bold}>{fmtMoney(grandTotal)}</span>
+        </div>
+        <div style={styles.flexBetween}>
+          <span>Cash:</span>
+          <span>{fmtMoney(cash)}</span>
+        </div>
+        <div style={styles.flexBetween}>
+          <span>Card/POS:</span>
+          <span>{fmtMoney(card)}</span>
+        </div>
+        <div style={styles.flexBetween}>
+          <span>Bank Transfer:</span>
+          <span>{fmtMoney(transfer)}</span>
+        </div>
+        {Number(totalCredit) > 0 && (
+          <div style={styles.flexBetween}>
+            <span>Credit Sales:</span>
+            <span>{fmtMoney(totalCredit)}</span>
+          </div>
+        )}
+      </div>
+      <hr style={styles.dashedHr} />
+
+      {/* Items by Category */}
+      {Object.keys(byCategory).length > 0 && (
+        <>
+          <div style={styles.section}>
+            <h3 style={{...styles.subHeader, fontSize: '14px'}}>SALES BY CATEGORY</h3>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>CATEGORY</th>
+                  <th style={{ ...styles.th, ...styles.right }}>QTY</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(byCategory).map(([cat, catItems]) => {
+                  const totalQty = Array.isArray(catItems) ? catItems.reduce((sum, it) => sum + Number(it.qty || 0), 0) : 0;
+                  return (
+                    <tr key={cat}>
+                      <td style={styles.td}>{cat}</td>
+                      <td style={{ ...styles.td, ...styles.right }}>{totalQty}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <hr style={styles.dashedHr} />
+        </>
+      )}
+
+      {/* Items Sold */}
+      {Array.isArray(items) && items.length > 0 && (
+        <>
+          <div style={styles.section}>
+            <h3 style={{...styles.subHeader, fontSize: '14px'}}>ITEMS SOLD</h3>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>ITEM</th>
+                  <th style={{ ...styles.th, ...styles.right }}>QTY</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.slice(0, 20).map((item, idx) => (
+                  <tr key={idx}>
+                    <td style={styles.td}>{item.name || 'Unknown'}</td>
+                    <td style={{ ...styles.td, ...styles.right }}>{item.qty || 0}</td>
+                  </tr>
+                ))}
+                {items.length > 20 && (
+                  <tr>
+                    <td style={styles.td} colSpan={2}>... and {items.length - 20} more items</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <hr style={styles.dashedHr} />
+        </>
+      )}
+
+      {/* Staff */}
+      <div style={styles.section}>
+        <h3 style={{...styles.subHeader, fontSize: '14px'}}>STAFF</h3>
+        {cashiers && <p><strong>Cashiers:</strong> {cashiers}</p>}
+        {serviceStaff && serviceStaff !== 'N/A' && <p><strong>Service Staff:</strong> {serviceStaff}</p>}
+        {user?.username && <p><strong>Generated By:</strong> {user.username}</p>}
+      </div>
+      <hr style={styles.dashedHr} />
+
+      <Footer message={businessInfo.receiptFooterNote || ''} />
+    </div>
+  );
+};
 
 const styles = {
   page: {
