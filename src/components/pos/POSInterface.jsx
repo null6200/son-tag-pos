@@ -2617,34 +2617,7 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
     try {
       const payload = { shiftId: shiftRegister.id, branchId: shiftRegister.branchId, sectionId: shiftRegister.sectionId };
       const rep = await api.reports.shift(payload);
-      const itemsByCategory = (rep?.items?.byCategory || []).reduce((acc, it) => {
-        acc[it.name || 'Unknown'] = [...(acc[it.name || 'Unknown'] || []), { name: it.name || 'Unknown', qty: it.count }];
-        return acc;
-      }, {});
-      const byBrand = (rep?.items?.byBrand || []).reduce((acc, it) => {
-        acc[it.name || 'N/A'] = [...(acc[it.name || 'N/A'] || []), { name: it.name || 'N/A', qty: it.count }];
-        return acc;
-      }, {});
-      const paymentBreakdown = {
-        cash: rep?.summary?.byMethod?.cash || 0,
-        card: rep?.summary?.byMethod?.card || 0,
-        transfer: rep?.summary?.byMethod?.transfer || 0,
-      };
-      const serviceStaff = 'N/A';
-      const cashiers = (rep?.staff?.cashiers || []).map(c => c.name).filter(Boolean).join(', ') || 'N/A';
-      return {
-        items: (rep?.items?.byCategory || []).map(it => ({ id: it.name, name: it.name, qty: it.count, brand: 'N/A', category: it.name })),
-        byBrand,
-        byCategory: itemsByCategory,
-        totalSales: rep?.summary?.totalSales || 0,
-        ...paymentBreakdown,
-        totalCredit: rep?.summary?.totalCreditSales || 0,
-        serviceStaff,
-        cashiers,
-        shiftRegister,
-        user,
-        reportType: 'Shift Details'
-      };
+      return rep; // Return raw API response for new ReportDialogContent
     } catch {
       return null;
     }
@@ -2653,8 +2626,7 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
   const handleOpenReport = async (type) => {
     const data = await generateReportData();
     if (data) {
-      const reportWithType = {...data, reportType: type};
-      setReportData(reportWithType);
+      setReportData(data);
       if (type === 'Z-Report') {
         setIsZReportOpen(true);
       } else {
@@ -2663,14 +2635,6 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
     } else {
       toast({ title: "No active shift", description: "Cannot generate a report without an active shift." });
     }
-  };
-
-  const handlePrintReport = () => {
-    handlePrint('z-report', reportData); // Re-using z-report print view
-  };
-
-  const handleExportReport = () => {
-    toast({ title: "Feature coming soon!", description: "Export functionality is not yet implemented." });
   };
 
   const handleCloseRegister = async (e) => {
@@ -2720,7 +2684,7 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
               <Eye className="w-5 h-5" />
             </Button>
           </DialogTrigger>
-          <ReportDialogContent reportData={reportData} onClose={() => setIsDetailsOpen(false)} onPrint={handlePrintReport} onExport={handleExportReport} />
+          <ReportDialogContent report={reportData} onClose={() => setIsDetailsOpen(false)} />
         </Dialog>
 
         <Dialog open={isCloseFormOpen} onOpenChange={setIsCloseFormOpen}>
@@ -2731,7 +2695,12 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
           </DialogTrigger>
           <DialogContent>
               <DialogHeader>
-                  <DialogTitle>Close Shift Register</DialogTitle>
+                  <DialogTitle className="flex items-center justify-between">
+                    Close Shift Register
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setIsCloseFormOpen(false); handleOpenReport('Z-Report'); setIsZReportOpen(true); }}>
+                      <FileText className="w-4 h-4 mr-2" /> View Report
+                    </Button>
+                  </DialogTitle>
                   <DialogDescription>Count the cash in the drawer and enter the final amount.</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleCloseRegister} className="space-y-4 pt-4">
@@ -2757,7 +2726,7 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
                 <Wallet className="w-5 h-5" />
             </Button>
           </DialogTrigger>
-          <ReportDialogContent reportData={reportData} onClose={() => setIsZReportOpen(false)} onPrint={handlePrintReport} onExport={handleExportReport} />
+          <ReportDialogContent report={reportData} onClose={() => setIsZReportOpen(false)} />
         </Dialog>
         
         <DropdownMenu>
@@ -2823,69 +2792,260 @@ const AppBar = ({ time, isOnline, user, toggleTheme, currentTheme, onBackToDashb
   )
 };
 
-const ReportDialogContent = ({ reportData, onClose, onPrint, onExport }) => (
-    <DialogContent className="max-w-3xl">
+const ReportDialogContent = ({ report, onClose }) => {
+  const printRef = useRef(null);
+
+  const handlePrint = () => {
+    if (!printRef.current) return;
+    const printContent = printRef.current.innerHTML;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Register Details Report</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 20px; font-size: 12px; }
+            h2 { font-size: 18px; margin-bottom: 4px; }
+            h3 { font-size: 14px; margin: 16px 0 8px 0; }
+            p { margin-bottom: 4px; color: #666; font-size: 11px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+            th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+            th { background: #f5f5f5; font-weight: 600; }
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            .font-semibold { font-weight: 600; }
+            .summary-grid { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #ddd; margin-bottom: 16px; }
+            .summary-grid > div { padding: 6px 10px; border-bottom: 1px solid #ddd; }
+            .summary-grid > div:nth-last-child(-n+2) { border-bottom: none; }
+            .bg-green { background: #f0fdf4; }
+            .bg-red { background: #fef2f2; }
+            .bg-yellow { background: #fefce8; }
+            .footer { margin-top: 16px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; }
+            .totals-row { display: flex; justify-content: space-between; margin-top: 8px; font-weight: 600; font-size: 11px; }
+            @media print { body { padding: 10px; } }
+          </style>
+        </head>
+        <body>${printContent}</body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  };
+
+  if (!report) {
+    return (
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
-            <DialogTitle>{reportData?.reportType || 'Report'}</DialogTitle>
-            <DialogDescription>This report summarizes the financial activity for the current shift.</DialogDescription>
+          <DialogTitle>Register Report</DialogTitle>
         </DialogHeader>
-        {reportData ? (
-        <div className="max-h-[70vh] overflow-y-auto p-1 text-sm">
-            <div className="grid grid-cols-2 gap-x-8 gap-y-2 mb-4">
-                <InfoItem label="Section" value={reportData.shiftRegister.sectionName} />
-                <InfoItem label="Report Generated By" value={reportData.user?.username || ''} />
-                <InfoItem label="Shift Started" value={new Date(reportData.shiftRegister.openedAt).toLocaleString()} />
-                <InfoItem label="Report Time" value={new Date().toLocaleString()} />
-            </div>
-
-            <h3 className="font-bold text-lg my-4 border-b pb-2">Sales Summary</h3>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                <InfoItem label="Total Sales" value={`${fmt(reportData.totalSales)}`} className="font-bold text-primary" />
-                <InfoItem label="Total Credit Sales" value={`${fmt(reportData.totalCredit)}`} />
-                <InfoItem label="Paid by Cash" value={`${fmt(reportData.cash)}`} />
-                <InfoItem label="Paid by Card" value={`${fmt(reportData.card)}`} />
-                <InfoItem label="Paid by Transfer" value={`${fmt(reportData.transfer)}`} />
-            </div>
-            
-            <h3 className="font-bold text-lg my-4 border-b pb-2">Items Sold ({reportData.items.reduce((sum, i) => sum + i.qty, 0)} total)</h3>
-            <div className="space-y-1">
-                {reportData.items.map(item => <InfoItem key={item.id} label={item.name} value={item.qty} />)}
-            </div>
-
-            <h3 className="font-bold text-lg my-4 border-b pb-2">Sales by Category</h3>
-            {Object.entries(reportData.byCategory).map(([category, items]) => (
-                <div key={category} className="mb-3">
-                    <p className="font-semibold mb-1">{category} ({items.reduce((sum, i) => sum + i.qty, 0)} items)</p>
-                    <div className="pl-4 space-y-1 border-l">
-                        {items.map(item => <InfoItem key={item.id} label={item.name} value={item.qty} />)}
-                    </div>
-                </div>
-            ))}
-
-            <h3 className="font-bold text-lg my-4 border-b pb-2">Sales by Brand</h3>
-             {Object.entries(reportData.byBrand).map(([brand, items]) => (
-                <div key={brand} className="mb-3">
-                    <p className="font-semibold mb-1">{brand} ({items.reduce((sum, i) => sum + i.qty, 0)} items)</p>
-                    <div className="pl-4 space-y-1 border-l">
-                        {items.map(item => <InfoItem key={item.id} label={item.name} value={item.qty} />)}
-                    </div>
-                </div>
-            ))}
-
-            <h3 className="font-bold text-lg my-4 border-b pb-2">Staff</h3>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                <InfoItem label="Service Staff" value={reportData.serviceStaff || 'N/A'} />
-                <InfoItem label="Cashiers" value={reportData.cashiers || 'N/A'} />
-            </div>
-        </div>
-        ) : <p>No active shift register data to display.</p>}
+        <p className="py-8 text-center text-muted-foreground">No active shift register data to display.</p>
         <DialogFooter>
-          <Button variant="outline" onClick={onExport}><Download className="w-4 h-4 mr-2" /> Export</Button>
-          <Button onClick={onPrint}><Printer className="w-4 h-4 mr-2" /> Print Report</Button>
           <Button onClick={onClose}>Close</Button>
         </DialogFooter>
+      </DialogContent>
+    );
+  }
+
+  const shift = report.shift || {};
+  const summary = report.summary || {};
+  const items = report.items || {};
+  const totalSales = Number(summary.totalSales ?? 0);
+  const totalDiscounts = Number(summary.totalDiscounts ?? 0);
+  const totalExpenses = Number(summary.totalExpenses ?? 0);
+  const creditSales = Number(summary.totalCreditSales ?? 0);
+  const netSales = Math.max(0, totalSales - totalDiscounts);
+
+  const products = Array.isArray(items.products) ? items.products : [];
+  const categories = Array.isArray(items.byCategory) ? items.byCategory : [];
+  const productsByBrand = Array.isArray(items.byBrand) ? items.byBrand : [];
+
+  const totalQtyProducts = products.reduce((acc, p) => acc + Number(p.count || 0), 0);
+  const totalQtyByCategory = categories.reduce((acc, c) => acc + Number(c.count || 0), 0);
+  const totalQtyByBrand = productsByBrand.reduce((acc, b) => acc + Number(b.count || 0), 0);
+
+  const firstCashier = Array.isArray(report.staff?.cashiers) && report.staff.cashiers.length > 0
+    ? report.staff.cashiers[0]
+    : null;
+  const displayUserName = shift.openedByName || firstCashier?.name || 'Unknown';
+  const displayUserEmail = shift.openedByEmail || firstCashier?.email || '';
+  const displayLocation = [shift.branchName, shift.sectionName].filter(Boolean).join(' - ') || shift.branchLocation || '';
+
+  const byMethod = summary.byMethod || {};
+  const cash = Number(byMethod.cash || byMethod['cash payment'] || 0);
+  const card = Number(byMethod.card || byMethod['card payment'] || 0);
+  const transfer = Number(byMethod.transfer || byMethod['bank transfer'] || 0);
+  const otherKeys = Object.keys(byMethod).filter(k => !['cash','cash payment','card','card payment','transfer','bank transfer'].includes(k));
+  const other = otherKeys.reduce((acc, k) => acc + Number(byMethod[k] || 0), 0);
+  const paymentRows = [
+    { label: 'Cash Payment', amount: cash },
+    { label: 'Card Payment', amount: card },
+    { label: 'Bank Transfer', amount: transfer },
+  ];
+  if (other !== 0) paymentRows.push({ label: 'Other Payments', amount: other });
+
+  return (
+    <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogHeader className="flex flex-row items-start justify-between shrink-0">
+        <div>
+          <DialogTitle>Register Details</DialogTitle>
+          <DialogDescription>
+            {`${shift.startedAt ? new Date(shift.startedAt).toLocaleString() : (shift.openedAt ? new Date(shift.openedAt).toLocaleString() : 'Unknown')} - ${shift.endedAt ? new Date(shift.endedAt).toLocaleString() : (shift.closedAt ? new Date(shift.closedAt).toLocaleString() : 'Now')}`}
+          </DialogDescription>
+        </div>
+        <Button variant="outline" size="sm" onClick={handlePrint}><Printer className="w-4 h-4 mr-2" /> Print Report</Button>
+      </DialogHeader>
+
+      <div ref={printRef} className="flex-1 overflow-y-auto space-y-6 py-4 text-sm">
+        {/* Payment Summary Table */}
+        <section>
+          <h3 className="text-base font-semibold mb-2">Payment Summary</h3>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-muted">
+                <th className="border px-3 py-2 text-left">Payment Method</th>
+                <th className="border px-3 py-2 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paymentRows.map(r => (
+                <tr key={r.label}>
+                  <td className="border px-3 py-2">{r.label}</td>
+                  <td className="border px-3 py-2 text-right">{fmt(r.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+
+        {/* Totals Grid */}
+        <section className="border rounded-md overflow-hidden text-sm">
+          <div className="grid grid-cols-2">
+            <div className="px-3 py-2 font-semibold border-b">Net Sales</div>
+            <div className="px-3 py-2 border-b text-right bg-green-50 font-semibold">{fmt(netSales)}</div>
+            <div className="px-3 py-2 font-semibold border-b">Total Discount</div>
+            <div className="px-3 py-2 border-b text-right bg-red-50">{fmt(totalDiscounts)}</div>
+            <div className="px-3 py-2 font-semibold border-b">Total Payment</div>
+            <div className="px-3 py-2 border-b text-right bg-green-50 font-semibold">{fmt(totalSales)}</div>
+            <div className="px-3 py-2 font-semibold border-b">Credit Sales</div>
+            <div className="px-3 py-2 border-b text-right bg-yellow-50">{fmt(creditSales)}</div>
+            <div className="px-3 py-2 font-semibold">Total Expenses</div>
+            <div className="px-3 py-2 text-right bg-red-50">{fmt(totalExpenses)}</div>
+          </div>
+        </section>
+
+        {/* Products Sold */}
+        <section>
+          <h3 className="text-base font-semibold mb-2">Details of products sold</h3>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-muted">
+                <th className="border px-3 py-2 text-left w-12">#</th>
+                <th className="border px-3 py-2 text-left">Product</th>
+                <th className="border px-3 py-2 text-center">Quantity</th>
+                <th className="border px-3 py-2 text-right">Total amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {products.map((p, idx) => (
+                <tr key={p.name || idx}>
+                  <td className="border px-3 py-2">{idx + 1}</td>
+                  <td className="border px-3 py-2">{p.name}</td>
+                  <td className="border px-3 py-2 text-center">{p.count}</td>
+                  <td className="border px-3 py-2 text-right">{fmt(p.totalAmount ?? 0)}</td>
+                </tr>
+              ))}
+              {products.length === 0 && (
+                <tr><td colSpan={4} className="border px-3 py-4 text-center text-muted-foreground">No products sold.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="mt-2 text-sm font-semibold flex justify-between">
+            <span>Total quantity: {totalQtyProducts}</span>
+            <span>Grand Total: {fmt(totalSales)}</span>
+          </div>
+        </section>
+
+        {/* By Category */}
+        <section>
+          <h3 className="text-base font-semibold mb-2">Details of products sold (By Category)</h3>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-muted">
+                <th className="border px-3 py-2 text-left">Category</th>
+                <th className="border px-3 py-2 text-center">Quantity</th>
+                <th className="border px-3 py-2 text-right">Total amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map((c, idx) => (
+                <tr key={c.name || idx}>
+                  <td className="border px-3 py-2">{c.name}</td>
+                  <td className="border px-3 py-2 text-center">{c.count}</td>
+                  <td className="border px-3 py-2 text-right">{fmt(c.totalAmount ?? 0)}</td>
+                </tr>
+              ))}
+              {categories.length === 0 && (
+                <tr><td colSpan={3} className="border px-3 py-4 text-center text-muted-foreground">No category data available.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="mt-2 text-sm font-semibold flex justify-between">
+            <span>Total quantity: {totalQtyByCategory}</span>
+            <span>Grand Total: {fmt(totalSales)}</span>
+          </div>
+        </section>
+
+        {/* By Brand */}
+        <section>
+          <h3 className="text-base font-semibold mb-2">Details of products sold (By Brand)</h3>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-muted">
+                <th className="border px-3 py-2 text-left">Brand</th>
+                <th className="border px-3 py-2 text-center">Quantity</th>
+                <th className="border px-3 py-2 text-right">Total amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productsByBrand.map((b, idx) => (
+                <tr key={b.name || idx}>
+                  <td className="border px-3 py-2">{b.name || 'Unbranded'}</td>
+                  <td className="border px-3 py-2 text-center">{b.count}</td>
+                  <td className="border px-3 py-2 text-right">{fmt(b.totalAmount ?? 0)}</td>
+                </tr>
+              ))}
+              {productsByBrand.length === 0 && (
+                <tr><td colSpan={3} className="border px-3 py-4 text-center text-muted-foreground">No brand data available.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div className="mt-2 text-sm font-semibold flex justify-between">
+            <span>Total quantity: {totalQtyByBrand}</span>
+            <span>Grand Total: {fmt(totalSales)}</span>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <section className="pt-4 border-t mt-4 text-sm">
+          <div className="flex flex-col gap-1">
+            <div>User: <span className="font-semibold">{displayUserName}</span></div>
+            <div>Email: <span className="font-semibold">{displayUserEmail}</span></div>
+            <div><span className="font-semibold">{displayLocation}</span></div>
+          </div>
+        </section>
+      </div>
+
+      <DialogFooter className="shrink-0">
+        <Button onClick={onClose}>Close</Button>
+      </DialogFooter>
     </DialogContent>
-);
+  );
+};
 
 const ProductSidebar = ({ searchTerm, setSearchTerm, activeCategory, setActiveCategory, categories: sidebarCats = categories }) => (
   <aside className="w-[320px] bg-card border-r p-4 flex flex-col gap-4">
