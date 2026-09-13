@@ -83,10 +83,11 @@ model Customer {
   branch    Branch  @relation(fields: [branchId], references: [id])
   branchId  String
 
-  name      String
-  phone     String?
-  email     String?
-  notes     String?
+  name         String
+  businessName String?
+  phone        String?
+  email        String?
+  notes        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -390,14 +391,20 @@ model Expense {
 
 // Suppliers for purchases (optional branch scope)
 model Supplier {
-  id       String  @id @default(uuid())
-  name     String
-  branch   Branch? @relation(fields: [branchId], references: [id])
-  branchId String?
+  id            String  @id @default(uuid())
+  name          String
+  businessName  String?
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  branch        Branch? @relation(fields: [branchId], references: [id])
+  branchId      String?
 
   purchases Purchase[]
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Brands (optional branch scope)

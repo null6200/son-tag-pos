@@ -23,6 +23,7 @@ export class CustomersService {
     const data = {
       name,
       branchId,
+      businessName: dto.businessName ?? null,
       phone: dto.phone ?? dto.phoneNumber ?? null,
       email: dto.email ?? null,
       notes: dto.address ?? dto.notes ?? null,
@@ -60,6 +61,11 @@ export class CustomersService {
     if (dto && dto.email !== undefined) {
       if (dto.email !== null && typeof dto.email !== 'string') throw new BadRequestException('email must be a string or null');
       data.email = dto.email;
+      provided++;
+    }
+    if (dto && dto.businessName !== undefined) {
+      if (dto.businessName !== null && typeof dto.businessName !== 'string') throw new BadRequestException('businessName must be a string or null');
+      data.businessName = dto.businessName;
       provided++;
     }
     if (dto && (dto.address !== undefined || dto.notes !== undefined)) {
