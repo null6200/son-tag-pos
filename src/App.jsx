@@ -328,6 +328,7 @@ export default function App() {
     } catch (e) {
       console.log('[Register] Registration or login error:', e);
       setView('register');
+      throw e;
     }
   };
 

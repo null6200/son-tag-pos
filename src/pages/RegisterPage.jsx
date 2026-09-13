@@ -94,11 +94,12 @@ const RegisterPage = ({ onRegister, onNavigateToLogin, onRegistered }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateStep3()) return;
-    toast({ title: "Registration Successful!", description: "Your business is being set up." });
     try {
       await Promise.resolve(onRegister && onRegister(businessData, ownerData));
-    } finally {
+      toast({ title: "Registration Successful!", description: "Your business is being set up." });
       if (onRegistered) onRegistered();
+    } catch (err) {
+      toast({ title: "Registration failed", description: String(err?.message || err), variant: "destructive" });
     }
   };
   

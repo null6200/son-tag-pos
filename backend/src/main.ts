@@ -38,6 +38,11 @@ async function bootstrap() {
       if (!origin) return cb(null, true);
       // Always allow localhost origins for development
       if (origin.includes('localhost') || origin.includes('127.0.0.1')) return cb(null, true);
+      // Allow ngrok tunnel domains (dev/testing over a public URL)
+      try {
+        const host = new URL(origin).hostname;
+        if (/(^|\.)(ngrok-free\.(app|dev)|ngrok\.(io|app)|ngrok\.dev)$/.test(host)) return cb(null, true);
+      } catch {}
       if (allowed.length === 0) return cb(null, true);
       if (allowed.includes(origin)) return cb(null, true);
       return cb(new Error('CORS not allowed'), false);
