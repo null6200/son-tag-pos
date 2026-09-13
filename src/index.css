@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+ 
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+ 
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+ 
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+ 
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+ 
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+ 
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+ 
+    --radius: 0.5rem;
+
+    --dashboard-header-bg: #2d4a8a;
+    --pos-background: 0 0% 100%; /* Changed to white */
+  }
+ 
+  .dark {
+    --background: 224 71% 4%;
+    --foreground: 210 40% 98%;
+ 
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+ 
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+ 
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+ 
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+ 
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+ 
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+ 
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+ 
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 217.2 91.2% 59.8%;
+    
+    --dashboard-header-bg: #1e3a8a;
+    --pos-background: 0 0% 100%; /* Changed to white */
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  .new-dashboard-style {
+    @apply bg-slate-100 dark:bg-slate-900;
+  }
+}
+
+.bg-dashboard-header {
+  background-color: var(--dashboard-header-bg);
+}
+
+.bg-pos-background {
+  background-color: hsl(var(--pos-background));
+}
+
+.gradient-text {
+  @apply bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent;
+}
+
+.glass-effect {
+  @apply bg-white/30 dark:bg-slate-800/30 backdrop-blur-sm;
+}
+
+/* POS UI Specific Styles */
+.pos-bg {
+  background-color: #0f1420; /* This was the old pos-bg, now replaced by --pos-background */
+}
+
+.pos-card {
+  background-color: #151b2b;
+}
+
+.pos-text {
+  color: #e6e9ef;
+}
+
+.pos-brand {
+  color: #5b8cff;
+}
+
+.pos-accent {
+  color: #16c79a;
+}
+
+.pos-danger {
+  color: #ef4444;
+}
