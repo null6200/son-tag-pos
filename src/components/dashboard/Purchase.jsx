@@ -46,8 +46,8 @@ const TabButton = ({ icon: Icon, label, isActive, onClick }) => (
     <button
         onClick={onClick}
         className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-            isActive 
-                ? 'bg-primary text-primary-foreground' 
+            isActive
+                ? 'bg-primary text-primary-foreground'
                 : 'text-muted-foreground hover:bg-muted'
         }`}
     >
@@ -145,11 +145,11 @@ const ManageSuppliers = ({ user }) => {
                     )}
                 </div>
             </CardContent>
-            <SupplierForm 
-                isOpen={isFormOpen} 
-                onOpenChange={setIsFormOpen} 
-                onSave={handleSaveSupplier} 
-                supplier={editingSupplier} 
+            <SupplierForm
+                isOpen={isFormOpen}
+                onOpenChange={setIsFormOpen}
+                onSave={handleSaveSupplier}
+                supplier={editingSupplier}
             />
         </Card>
     );
@@ -209,18 +209,62 @@ const FormInput = ({ id, label, icon: Icon, ...props }) => (
     </div>
 );
 
+const ProductPicker = ({ products, value, onSelect, placeholder = 'Search products…' }) => {
+    const [query, setQuery] = useState(value || '');
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => { setQuery(value || ''); }, [value]);
+
+    const matches = query.trim()
+        ? (products || []).filter(p => p.name.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 8)
+        : (products || []).slice(0, 8);
+
+    return (
+        <div className="relative flex-1 min-w-[180px]">
+            <Input
+                placeholder={placeholder}
+                value={query}
+                onChange={e => { setQuery(e.target.value); setOpen(true); }}
+                onFocus={() => setOpen(true)}
+                onBlur={() => setTimeout(() => setOpen(false), 120)}
+                required
+            />
+            {open && matches.length > 0 && (
+                <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border bg-popover shadow-md">
+                    {matches.map(p => (
+                        <button
+                            type="button"
+                            key={p.id}
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex justify-between gap-2"
+                            onMouseDown={() => { onSelect(p); setQuery(p.name); setOpen(false); }}
+                        >
+                            <span>{p.name}</span>
+                            <span className="text-muted-foreground">${Number(p.price || 0).toFixed(2)}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const CreatePO = ({ user }) => {
     const [suppliers, setSuppliers] = useState([]);
-    const [items, setItems] = useState([{ name: '', quantity: 1, price: 0 }]);
+    const [products, setProducts] = useState([]);
+    const [items, setItems] = useState([{ productId: '', name: '', quantity: 1, price: 0 }]);
 
     useEffect(() => {
         (async () => {
             try {
                 const branchId = user?.branchId;
-                if (!branchId) { setSuppliers([]); return; }
-                const res = await api.suppliers.list({ branchId });
-                setSuppliers(Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []));
-            } catch { setSuppliers([]); }
+                if (!branchId) { setSuppliers([]); setProducts([]); return; }
+                const [supRes, prodRes] = await Promise.all([
+                    api.suppliers.list({ branchId }),
+                    api.products.list({ branchId }),
+                ]);
+                setSuppliers(Array.isArray(supRes?.items) ? supRes.items : (Array.isArray(supRes) ? supRes : []));
+                setProducts(Array.isArray(prodRes?.items) ? prodRes.items : (Array.isArray(prodRes) ? prodRes : []));
+            } catch { setSuppliers([]); setProducts([]); }
         })();
     }, [user?.branchId]);
 
@@ -230,7 +274,18 @@ const CreatePO = ({ user }) => {
         setItems(newItems);
     };
 
-    const addItem = () => setItems([...items, { name: '', quantity: 1, price: 0 }]);
+    const handleProductSelect = (index, product) => {
+        const newItems = [...items];
+        newItems[index] = {
+            ...newItems[index],
+            productId: product.id,
+            name: product.name,
+            price: newItems[index].price || Number(product.price || 0),
+        };
+        setItems(newItems);
+    };
+
+    const addItem = () => setItems([...items, { productId: '', name: '', quantity: 1, price: 0 }]);
     const removeItem = (index) => setItems(items.filter((_, i) => i !== index));
 
     const total = items.reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price)), 0);
@@ -241,17 +296,20 @@ const CreatePO = ({ user }) => {
             const branchId = user?.branchId;
             const supplierName = e.target.supplier.value;
             const supplier = (suppliers || []).find(s => s.name === supplierName);
+            const missing = items.some(it => !it.productId);
+            if (missing) {
+                toast({ title: 'Pick a product for every line', description: 'Select a product from the list for each item before saving.', variant: 'destructive' });
+                return;
+            }
             const payload = {
                 branchId,
                 supplierId: supplier?.id,
-                items,
-                total,
-                status: 'Pending',
+                items: items.map(it => ({ productId: it.productId, quantity: Number(it.quantity), price: Number(it.price) })),
             };
             const created = await api.purchaseOrders.create(payload);
             toast({ title: 'Purchase Order Created!', description: `PO #${created?.id || ''} has been saved.` });
             e.target.reset();
-            setItems([{ name: '', quantity: 1, price: 0 }]);
+            setItems([{ productId: '', name: '', quantity: 1, price: 0 }]);
         } catch (err) {
             toast({ title: 'Create failed', description: String(err?.message || err), variant: 'destructive' });
         }
@@ -279,12 +337,17 @@ const CreatePO = ({ user }) => {
                         </div>
                         <FormInput id="orderDate" label="Order Date" value={new Date().toLocaleDateString()} icon={Calendar} readOnly />
                     </div>
-                    
+
                     <div className="space-y-4">
                         <Label>Items</Label>
+                        <p className="text-xs text-muted-foreground">Search your product catalog for each line — the price prefills from the catalog and is still editable.</p>
                         {items.map((item, index) => (
                             <div key={index} className="flex items-center gap-2 p-2 rounded-md border">
-                                <Input placeholder="Item Name" value={item.name} onChange={e => handleItemChange(index, 'name', e.target.value)} required />
+                                <ProductPicker
+                                    products={products}
+                                    value={item.name}
+                                    onSelect={(p) => handleProductSelect(index, p)}
+                                />
                                 <Input type="number" placeholder="Qty" min="1" value={item.quantity} onChange={e => handleItemChange(index, 'quantity', e.target.value)} className="w-24" required />
                                 <Input type="number" placeholder="Price" min="0" step="0.01" value={item.price} onChange={e => handleItemChange(index, 'price', e.target.value)} className="w-28" required />
                                 <Button type="button" variant="destructive" size="icon" onClick={() => removeItem(index)}><Trash2 className="w-4 h-4" /></Button>
@@ -374,7 +437,7 @@ const PurchaseHistory = ({ user }) => {
                                 </div>
                                 <div className="text-right">
                                     <p className="font-bold text-lg">${po.total.toFixed(2)}</p>
-                                    <span className={`px-2 py-1 text-xs rounded-full ${po.status === 'Pending' ? 'bg-yellow-200 text-yellow-800' : po.status === 'Cancelled' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>{po.status}</span>
+                                    <span className={`px-2 py-1 text-xs rounded-full ${po.status === 'PENDING' ? 'bg-yellow-200 text-yellow-800' : po.status === 'CANCELLED' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>{po.status}</span>
                                 </div>
                             </div>
                             <div className="mt-4 pt-2 border-t flex items-center justify-between">
@@ -388,7 +451,7 @@ const PurchaseHistory = ({ user }) => {
                                 </div>
                                 <div className="flex gap-2">
                                     <Button variant="outline" onClick={() => openDetail(po)}>View</Button>
-                                    {po.status === 'Pending' && (
+                                    {po.status === 'PENDING' && (
                                       <>
                                         <Button variant="secondary" onClick={() => updateStatus(po, 'APPROVED')}>Approve</Button>
                                         <Button variant="destructive" onClick={() => updateStatus(po, 'CANCELLED')}>Cancel</Button>
@@ -421,7 +484,7 @@ const PurchaseHistory = ({ user }) => {
                         <p className="text-sm">Date: {poDetail?.orderDate ? new Date(poDetail.orderDate).toLocaleString() : '—'}</p>
                       </div>
                       <div className="text-right">
-                        <span className={`px-2 py-1 text-xs rounded-full ${poDetail?.status === 'Pending' ? 'bg-yellow-200 text-yellow-800' : poDetail?.status === 'Cancelled' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>{poDetail?.status}</span>
+                        <span className={`px-2 py-1 text-xs rounded-full ${poDetail?.status === 'PENDING' ? 'bg-yellow-200 text-yellow-800' : poDetail?.status === 'CANCELLED' ? 'bg-red-200 text-red-800' : 'bg-green-200 text-green-800'}`}>{poDetail?.status}</span>
                       </div>
                     </div>
                     <div className="border rounded p-2">
@@ -434,7 +497,7 @@ const PurchaseHistory = ({ user }) => {
                       <div className="text-right font-bold mt-2">Total: ${Number(poDetail?.total || 0).toFixed(2)}</div>
                     </div>
                     <DialogFooter>
-                      {poDetail?.status === 'Pending' && (
+                      {poDetail?.status === 'PENDING' && (
                         <div className="flex gap-2">
                           <Button variant="secondary" onClick={() => updateStatus(poDetail, 'APPROVED')}>Approve</Button>
                           <Button variant="destructive" onClick={() => updateStatus(poDetail, 'CANCELLED')}>Cancel</Button>
